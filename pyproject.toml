@@ -21,6 +21,10 @@ packages = [{include = "llming_models"}]
 
 [tool.poetry.dependencies]
 python = ">=3.12"
+pymongo = {version = ">=4.16", optional = true}
+
+[tool.poetry.extras]
+mongodb = ["pymongo"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0"

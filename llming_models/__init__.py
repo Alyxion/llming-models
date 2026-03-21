@@ -41,5 +41,13 @@ __all__ = [
     "BudgetHandler",
     "BudgetLimit",
     "MemoryBudgetLimit",
+    "MongoDBBudgetLimit",
     "LLMBudgetManager",
 ]
+
+
+def __getattr__(name):
+    if name == "MongoDBBudgetLimit":
+        from llming_models.budget import MongoDBBudgetLimit
+        return MongoDBBudgetLimit
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
