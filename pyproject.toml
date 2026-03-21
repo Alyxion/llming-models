@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "llming-models"
 version = "0.1.0"
-description = "Model metadata, configuration, and budget management for llming applications"
+description = "LLM execution engine — multi-provider streaming, MCP tools, and budget management"
 authors = ["Michael Ikemann"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/Alyxion/llming-models"
 homepage = "https://github.com/Alyxion/llming-models"
-keywords = ["llm", "models", "budget", "configuration", "metadata"]
+keywords = ["llm", "models", "mcp", "openai", "anthropic", "streaming"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -21,6 +21,20 @@ packages = [{include = "llming_models"}]
 
 [tool.poetry.dependencies]
 python = ">=3.12"
+
+# Core
+pydantic = "*"
+tiktoken = "*"
+
+# LLM providers
+openai = ">=2.14"
+anthropic = "*"
+google-genai = ">=1.56"
+
+# MCP (Model Context Protocol)
+mcp = ">=1.0"
+
+# Optional
 pymongo = {version = ">=4.16", optional = true}
 
 [tool.poetry.extras]
