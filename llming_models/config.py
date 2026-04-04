@@ -3,6 +3,7 @@
 Provides global and user-level model configuration with include/exclude
 filters and default model selection per category.
 """
+from __future__ import annotations
 
 import fnmatch
 from dataclasses import dataclass, field
@@ -98,7 +99,7 @@ class LLMUserConfig(LLMBaseConfig):
         """Check if a model is supported by the user config."""
         return self.global_config.is_model_supported(model) and super().is_model_supported(model)
 
-    def get_default_model(self, category: str) -> str:
+    def get_default_model(self, category: str) -> str | None:
         """Get the default model for a given category. User setting overrules global.
 
         :param category: The category to look up.

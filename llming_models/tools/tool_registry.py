@@ -3,10 +3,13 @@
 This module provides a ToolRegistry that manages tool registration,
 discovery, and execution across different sources (builtin, MCP, provider-native).
 """
+from __future__ import annotations
+
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from .tool_definition import (
     PROVIDER_COMPAT,
@@ -39,9 +42,9 @@ class ToolRegistry:
         Args:
             auto_register_defaults: If True, register default tools (web_search, generate_image)
         """
-        self._tools: Dict[str, ToolDefinition] = {}
-        self._mcp_connections: Dict[str, Any] = {}  # MCPConnection instances
-        self._event_loop = None  # Event loop for MCP async operations
+        self._tools: dict[str, ToolDefinition] = {}
+        self._mcp_connections: dict[str, Any] = {}  # MCPConnection instances
+        self._event_loop: Any = None  # Event loop for MCP async operations
 
         if auto_register_defaults:
             self._register_default_tools()
@@ -50,7 +53,7 @@ class ToolRegistry:
         """Set the event loop for async MCP operations."""
         self._event_loop = loop
 
-    def get_event_loop(self):
+    def get_event_loop(self) -> Any:
         """Get the event loop for async MCP operations."""
         return self._event_loop
 
@@ -82,10 +85,10 @@ class ToolRegistry:
         name: str,
         description: str,
         callback: Callable[..., Any],
-        parameters: Optional[Dict[str, Any]] = None,
-        ui: Optional[ToolUIMetadata] = None,
-        fixed_cost_usd: Optional[float] = None,
-        requires_provider: Optional[str] = None,
+        parameters: dict[str, Any] | None = None,
+        ui: ToolUIMetadata | None = None,
+        fixed_cost_usd: float | None = None,
+        requires_provider: str | None = None,
         realtime_enabled: bool = False,
     ) -> ToolDefinition:
         """Register a built-in Python tool.
@@ -121,9 +124,9 @@ class ToolRegistry:
         self,
         name: str,
         description: str,
-        provider_config: Dict[str, Any],
-        ui: Optional[ToolUIMetadata] = None,
-        requires_provider: Optional[str] = None,
+        provider_config: dict[str, Any],
+        ui: ToolUIMetadata | None = None,
+        requires_provider: str | None = None,
     ) -> ToolDefinition:
         """Register a provider-native tool (e.g., OpenAI's web_search).
 
@@ -153,11 +156,11 @@ class ToolRegistry:
         name: str,
         description: str,
         command: str,
-        args: Optional[List[str]] = None,
-        env: Optional[Dict[str, str]] = None,
-        cwd: Optional[str] = None,
-        parameters: Optional[Dict[str, Any]] = None,
-        ui: Optional[ToolUIMetadata] = None,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        ui: ToolUIMetadata | None = None,
     ) -> ToolDefinition:
         """Register an MCP tool via stdio transport.
 
@@ -195,10 +198,10 @@ class ToolRegistry:
         name: str,
         description: str,
         url: str,
-        api_key: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
-        parameters: Optional[Dict[str, Any]] = None,
-        ui: Optional[ToolUIMetadata] = None,
+        api_key: str | None = None,
+        headers: dict[str, str] | None = None,
+        parameters: dict[str, Any] | None = None,
+        ui: ToolUIMetadata | None = None,
     ) -> ToolDefinition:
         """Register an MCP tool via HTTP transport.
 
@@ -229,7 +232,7 @@ class ToolRegistry:
         self.register(tool)
         return tool
 
-    def load_from_json(self, path: Path) -> List[ToolDefinition]:
+    def load_from_json(self, path: Path) -> list[ToolDefinition]:
         """Load tool definitions from a JSON file.
 
         Expected format:
@@ -292,7 +295,7 @@ class ToolRegistry:
             return True
         return False
 
-    def get(self, name: str, provider: Optional[str] = None) -> Optional[ToolDefinition]:
+    def get(self, name: str, provider: str | None = None) -> ToolDefinition | None:
         """Get a tool by name, optionally for a specific provider.
 
         Args:
@@ -318,7 +321,7 @@ class ToolRegistry:
         # Fall back to generic name
         return self._tools.get(name)
 
-    def get_all(self) -> List[ToolDefinition]:
+    def get_all(self) -> list[ToolDefinition]:
         """Get all registered tools.
 
         Returns:
@@ -326,7 +329,7 @@ class ToolRegistry:
         """
         return list(self._tools.values())
 
-    def get_visible(self) -> List[ToolDefinition]:
+    def get_visible(self) -> list[ToolDefinition]:
         """Get all tools that should be shown in UI.
 
         Returns:
@@ -334,7 +337,7 @@ class ToolRegistry:
         """
         return [t for t in self._tools.values() if t.is_visible()]
 
-    def get_by_category(self, category: str) -> List[ToolDefinition]:
+    def get_by_category(self, category: str) -> list[ToolDefinition]:
         """Get all tools in a specific category.
 
         Args:
@@ -348,7 +351,7 @@ class ToolRegistry:
             if t.ui and t.ui.category == category
         ]
 
-    def get_for_provider(self, provider: str) -> List[ToolDefinition]:
+    def get_for_provider(self, provider: str) -> list[ToolDefinition]:
         """Get all tools available for a specific provider.
 
         Args:
@@ -362,7 +365,7 @@ class ToolRegistry:
             if t.is_available_for_provider(provider)
         ]
 
-    def get_names(self) -> List[str]:
+    def get_names(self) -> list[str]:
         """Get all registered tool names.
 
         Returns:
@@ -400,7 +403,7 @@ class ToolRegistry:
             return True
         return False
 
-    async def execute(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def execute(self, name: str, arguments: dict[str, Any]) -> Any:
         """Execute a tool by name.
 
         Args:
@@ -450,7 +453,7 @@ class ToolRegistry:
 
 
 # Global default registry instance
-_default_registry: Optional[ToolRegistry] = None
+_default_registry: ToolRegistry | None = None
 
 
 def get_default_registry() -> ToolRegistry:

@@ -3,10 +3,10 @@
 Defines the core types used to describe LLM models: their capabilities,
 pricing, size category, reasoning support, and UI metadata.
 """
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum, Enum
-from typing import Dict, List, Optional
 
 
 class ModelSize(IntEnum):
@@ -48,25 +48,25 @@ class LLMInfo:
     size: ModelSize = ModelSize.MEDIUM  # Model size category
     max_input_tokens: int = 64000  # Maximum number of input tokens
     max_output_tokens: int = 4096  # Maximum number of output tokens
-    api_base: Optional[str] = None  # Base URL for the API
+    api_base: str | None = None  # Base URL for the API
     supports_system_prompt: bool = True  # Whether the model supports system prompts
-    tokenizer_name: Optional[str] = None  # Tokenizer for token counting
-    model_icon: Optional[str] = None  # Path to model-specific icon
-    company_icon: Optional[str] = None  # Path to company/inventor icon
-    hosting_icon: Optional[str] = None  # Path to optional hosting company icon
+    tokenizer_name: str | None = None  # Tokenizer for token counting
+    model_icon: str | None = None  # Path to model-specific icon
+    company_icon: str | None = None  # Path to company/inventor icon
+    hosting_icon: str | None = None  # Path to optional hosting company icon
     popularity: int = 0  # Higher value = more popular
     reasoning: bool = False  # True if this is a reasoning model
-    reasoning_effort: Optional[ReasoningEffort] = None  # Reasoning effort level
-    default_reasoning_effort: Optional[ReasoningEffort] = None  # Default for this model size
-    enforced_temperature: Optional[float] = None  # Enforced temperature value
+    reasoning_effort: ReasoningEffort | None = None  # Reasoning effort level
+    default_reasoning_effort: ReasoningEffort | None = None  # Default for this model size
+    enforced_temperature: float | None = None  # Enforced temperature value
     supports_image_input: bool = False  # Whether the model supports image inputs
 
     # UI metadata for model selector
     speed: int = 5  # 1-10, higher = faster response
     quality: int = 5  # 1-10, higher = better reasoning/output quality
     best_use: str = "General"  # Short label for the model's strength
-    highlights: List[str] = field(default_factory=list)  # Key capabilities
+    highlights: list[str] = field(default_factory=list)  # Key capabilities
 
     # Tool configuration
-    default_tools: List[str] = field(default_factory=list)  # Default tools to enable
-    native_tools: Dict[str, Dict] = field(default_factory=dict)  # Provider-native tool configs
+    default_tools: list[str] = field(default_factory=list)  # Default tools to enable
+    native_tools: dict[str, dict] = field(default_factory=dict)  # Provider-native tool configs

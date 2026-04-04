@@ -1,12 +1,14 @@
 """Provider management for LLM integrations."""
-from typing import Dict, Type
+from __future__ import annotations
+
+from typing import Type
 
 # First, import the base types
 from .llm_provider_base import BaseProvider
 from .llm_provider_models import LLMInfo
 
 # Registry of provider implementations
-PROVIDERS: Dict[str, Type[BaseProvider]] = {}
+PROVIDERS: dict[str, Type[BaseProvider]] = {}
 
 
 def register_provider(provider_name: str):

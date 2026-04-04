@@ -4,8 +4,11 @@ This module provides backward compatibility by converting ToolDefinitions
 from the new registry into LlmToolbox instances that the existing
 provider clients understand.
 """
+from __future__ import annotations
+
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from .llm_tool import LlmTool
 from .llm_toolbox import LlmToolbox
@@ -23,7 +26,7 @@ class ToolboxAdapter:
     for backward compatibility with existing provider clients.
     """
 
-    def __init__(self, registry: Optional[ToolRegistry] = None):
+    def __init__(self, registry: ToolRegistry | None = None) -> None:
         """Initialize the adapter.
 
         Args:
@@ -33,13 +36,13 @@ class ToolboxAdapter:
 
     def get_toolboxes(
         self,
-        tool_names: List[str],
+        tool_names: list[str],
         provider: str,
-        tool_config: Optional[Dict[str, Any]] = None,
-        cost_callback: Optional[Callable[[str, float], None]] = None,
-        openai_client: Optional[Any] = None,
-        google_client: Optional[Any] = None,
-    ) -> List[LlmToolbox]:
+        tool_config: dict[str, Any] | None = None,
+        cost_callback: Callable[[str, float], None] | None = None,
+        openai_client: Any | None = None,
+        google_client: Any | None = None,
+    ) -> list[LlmToolbox]:
         """Convert tool definitions to LlmToolbox instances.
 
         Args:
@@ -85,10 +88,10 @@ class ToolboxAdapter:
         self,
         tool: ToolDefinition,
         provider: str,
-        tool_config: Dict[str, Any],
-        cost_callback: Optional[Callable[[str, float], None]] = None,
-        openai_client: Optional[Any] = None,
-    ) -> Optional[LlmToolbox]:
+        tool_config: dict[str, Any],
+        cost_callback: Callable[[str, float], None] | None = None,
+        openai_client: Any | None = None,
+    ) -> LlmToolbox | None:
         """Create a LlmToolbox from a ToolDefinition.
 
         Args:
@@ -125,7 +128,7 @@ class ToolboxAdapter:
     def _create_provider_native_toolbox(
         self,
         tool: ToolDefinition,
-        tool_config: Dict[str, Any],
+        tool_config: dict[str, Any],
     ) -> LlmToolbox:
         """Create toolbox for provider-native tools.
 
@@ -152,10 +155,10 @@ class ToolboxAdapter:
     def _create_image_generation_toolbox(
         self,
         tool: ToolDefinition,
-        openai_client: Optional[Any],
-        tool_config: Dict[str, Any],
-        cost_callback: Optional[Callable[[str, float], None]] = None,
-    ) -> Optional[LlmToolbox]:
+        openai_client: Any | None,
+        tool_config: dict[str, Any],
+        cost_callback: Callable[[str, float], None] | None = None,
+    ) -> LlmToolbox | None:
         """Create toolbox for GPT Image generation.
 
         Supports tool_config options:
@@ -251,15 +254,18 @@ class ToolboxAdapter:
     def _create_callback_toolbox(
         self,
         tool: ToolDefinition,
-        tool_config: Dict[str, Any],
-        cost_callback: Optional[Callable[[str, float], None]] = None,
+        tool_config: dict[str, Any],
+        cost_callback: Callable[[str, float], None] | None = None,
     ) -> LlmToolbox:
         """Create toolbox for a builtin tool with a callback."""
+        assert tool.callback is not None, f"Tool '{tool.name}' has no callback"
+        callback = tool.callback
+
         # Wrap callback to handle costs and config
-        def wrapped_callback(**kwargs) -> Any:
+        def wrapped_callback(**kwargs: Any) -> Any:
             # Merge tool_config defaults with provided kwargs
             merged_kwargs = {**tool_config, **kwargs}
-            result = tool.callback(**merged_kwargs)
+            result = callback(**merged_kwargs)
             if cost_callback and tool.fixed_cost_usd:
                 cost_callback(tool.name, tool.fixed_cost_usd)
             return result
@@ -267,7 +273,7 @@ class ToolboxAdapter:
         llm_tool = LlmTool(
             name=tool.name,
             description=tool.description,
-            func=wrapped_callback if (tool.fixed_cost_usd or tool_config) else tool.callback,
+            func=wrapped_callback if (tool.fixed_cost_usd or tool_config) else callback,
             parameters=tool.inputSchema
         )
 
@@ -280,8 +286,8 @@ class ToolboxAdapter:
     def _create_mcp_toolbox(
         self,
         tool: ToolDefinition,
-        tool_config: Dict[str, Any],
-        cost_callback: Optional[Callable[[str, float], None]] = None,
+        tool_config: dict[str, Any],
+        cost_callback: Callable[[str, float], None] | None = None,
     ) -> LlmToolbox:
         """Create toolbox for an MCP tool.
 
@@ -296,7 +302,6 @@ class ToolboxAdapter:
 
         def sync_wrapper(**kwargs) -> Any:
             """Sync wrapper for async MCP tool execution."""
-            import threading
             # Merge tool_config defaults with provided kwargs
             merged_kwargs = {**tool_config, **kwargs}
             logger.debug(f"[MCP_EXEC] Executing {tool_name}")
@@ -339,15 +344,15 @@ class ToolboxAdapter:
 
 
 def get_toolboxes_for_config(
-    tools: Optional[List[str]],
+    tools: list[str] | None,
     provider: str,
-    model_default_tools: Optional[List[str]] = None,
-    tool_config: Optional[Dict[str, Any]] = None,
-    cost_callback: Optional[Callable[[str, float], None]] = None,
-    openai_client: Optional[Any] = None,
-    google_client: Optional[Any] = None,
-    registry: Optional[ToolRegistry] = None,
-) -> List[LlmToolbox]:
+    model_default_tools: list[str] | None = None,
+    tool_config: dict[str, Any] | None = None,
+    cost_callback: Callable[[str, float], None] | None = None,
+    openai_client: Any | None = None,
+    google_client: Any | None = None,
+    registry: ToolRegistry | None = None,
+) -> list[LlmToolbox]:
     """Helper function to get toolboxes for a given configuration.
 
     This function handles the logic of determining which tools to use:

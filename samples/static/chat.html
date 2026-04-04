@@ -1,0 +1,1571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>llming playground</title>
+<style>
+/* -- Reset & Base -- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #1a1a2e;
+  --bg-surface: #16213e;
+  --bg-input: #0f3460;
+  --bg-user: #1a6dd4;
+  --bg-assistant: #2a2a40;
+  --bg-error: #5c1a1a;
+  --text: #e0e0e0;
+  --text-dim: #8888a0;
+  --text-bright: #ffffff;
+  --accent: #4ea8de;
+  --border: #2a2a50;
+  --radius: 12px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+}
+html, body { height: 100%; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* -- Top Bar -- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  z-index: 10;
+  flex-wrap: wrap;
+}
+.topbar h1 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.topbar select, .topbar input[type=range] {
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+}
+.topbar select { min-width: 200px; max-width: 360px; }
+.topbar select:focus { border-color: var(--accent); }
+.topbar label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+.prompt-group { display: flex; align-items: center; gap: 6px; flex: 1; max-width: 400px; }
+.prompt-group input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; color: var(--text); font-size: 12px; font-family: var(--font); }
+.prompt-group input:focus { outline: none; border-color: var(--accent); }
+.prompt-group label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+.topbar-spacer { flex: 1; }
+.btn-side-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn-side-toggle:hover { color: var(--text); border-color: var(--accent); }
+.btn-clear {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn-clear:hover { color: #ff6b6b; border-color: #ff6b6b; }
+
+/* -- TTS/STT controls in topbar -- */
+.tts-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tts-group select {
+  min-width: 100px;
+  max-width: 160px;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.provider-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.provider-group label {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.provider-group select {
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  min-width: 90px;
+  max-width: 140px;
+  outline: none;
+}
+.provider-group select:focus {
+  border-color: var(--accent);
+}
+.btn-icon {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 15px;
+  transition: color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.btn-icon:hover { color: var(--text); border-color: var(--accent); }
+.btn-icon.active { color: var(--accent); border-color: var(--accent); background: rgba(78,168,222,0.1); }
+
+/* -- Main Layout -- */
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* -- Chat Area -- */
+.chat-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  scroll-behavior: smooth;
+}
+.messages::-webkit-scrollbar { width: 6px; }
+.messages::-webkit-scrollbar-track { background: transparent; }
+.messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* -- Message Bubbles -- */
+.msg { display: flex; margin-bottom: 16px; }
+.msg.user { justify-content: flex-end; }
+.msg.assistant { justify-content: flex-start; }
+.msg.error { justify-content: flex-start; }
+
+.msg-wrapper {
+  max-width: 75%;
+  display: flex;
+  flex-direction: column;
+}
+
+.bubble {
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  line-height: 1.55;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+.msg.user .bubble {
+  background: var(--bg-user);
+  color: var(--text-bright);
+  border-bottom-right-radius: 4px;
+}
+.msg.assistant .bubble {
+  background: var(--bg-assistant);
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
+.msg.error .bubble {
+  background: var(--bg-error);
+  color: #ff8888;
+  border-bottom-left-radius: 4px;
+}
+
+/* -- Message actions row (speaker button, waveform) -- */
+.msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  min-height: 24px;
+}
+.btn-speak {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s;
+  line-height: 1;
+}
+.btn-speak:hover { color: var(--accent); }
+.btn-speak.playing { color: var(--accent); }
+
+/* TTS waveform animation */
+.tts-wave { display: flex; align-items: center; gap: 2px; height: 20px; }
+.tts-wave .bar {
+  width: 3px;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: wave 0.6s ease-in-out infinite;
+}
+.tts-wave .bar:nth-child(2) { animation-delay: 0.1s; }
+.tts-wave .bar:nth-child(3) { animation-delay: 0.2s; }
+.tts-wave .bar:nth-child(4) { animation-delay: 0.3s; }
+@keyframes wave { 0%,100% { height: 8px; } 50% { height: 20px; } }
+
+/* Word highlighting during TTS playback */
+.word-active { background: rgba(78,168,222,0.3); border-radius: 2px; }
+
+/* Markdown-ish in bubbles */
+.bubble p { margin-bottom: 8px; }
+.bubble p:last-child { margin-bottom: 0; }
+.bubble code {
+  font-family: var(--mono);
+  background: rgba(0,0,0,0.3);
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.bubble pre {
+  background: rgba(0,0,0,0.35);
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.bubble pre code { background: none; padding: 0; font-size: 13px; }
+.bubble strong { color: var(--text-bright); }
+
+/* Loading dots */
+.loading-dots span {
+  display: inline-block;
+  width: 8px; height: 8px;
+  margin: 0 2px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  animation: dot-pulse 1.4s infinite ease-in-out both;
+}
+.loading-dots span:nth-child(1) { animation-delay: 0s; }
+.loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+.loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dot-pulse {
+  0%, 80%, 100% { transform: scale(0.4); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+/* -- Input Bar -- */
+.input-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.input-normal {
+  flex: 1;
+  display: flex;
+}
+.input-normal textarea {
+  flex: 1;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-family: var(--font);
+  resize: none;
+  min-height: 42px;
+  max-height: 160px;
+  outline: none;
+  line-height: 1.4;
+}
+.input-normal textarea:focus { border-color: var(--accent); }
+.input-normal textarea::placeholder { color: var(--text-dim); }
+.btn-send {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.btn-send:hover { background: #3a96cc; }
+.btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Mic button (push-to-talk) */
+.btn-mic {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 10px;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 18px;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.btn-mic:hover { color: var(--text); border-color: var(--accent); }
+.btn-mic.recording {
+  color: #ff4444;
+  border-color: #ff4444;
+  background: rgba(255,68,68,0.15);
+}
+
+/* Recording overlay in input bar */
+.input-recording {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  padding: 8px 16px;
+  background: rgba(220, 38, 38, 0.1);
+  border-radius: var(--radius);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+}
+.rec-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #dc2626;
+  animation: pulse-dot 1s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.rec-time {
+  font-size: 13px;
+  color: #dc2626;
+  font-variant-numeric: tabular-nums;
+  min-width: 36px;
+}
+.rec-waveform {
+  flex: 1;
+  height: 40px;
+}
+.rec-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* -- Side Panel -- */
+.side-panel {
+  width: 300px;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  padding: 20px;
+  overflow-y: auto;
+  flex-shrink: 0;
+  transition: width 0.2s, padding 0.2s, opacity 0.2s;
+}
+.side-panel.collapsed {
+  width: 0;
+  padding: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+.side-panel h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+.side-panel .card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+.side-panel .stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 4px 0;
+}
+.side-panel .stat-row .label { color: var(--text-dim); }
+.side-panel .stat-row .value { color: var(--text); font-weight: 500; }
+.side-panel .stat-row .value.cost { color: #4ade80; }
+
+.meter-bar {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+.meter-bar .fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+.meter-bar .fill.speed { background: #4ea8de; }
+.meter-bar .fill.quality { background: #a78bfa; }
+
+.model-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+.highlights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.highlights span {
+  font-size: 11px;
+  background: var(--bg-input);
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+/* -- Welcome Screen -- */
+.welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 40px;
+}
+.welcome h2 { font-size: 24px; color: var(--text); margin-bottom: 8px; }
+.welcome p { font-size: 14px; max-width: 400px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<!-- Top Bar -->
+<div class="topbar">
+  <h1>llming playground</h1>
+  <select id="model-select"><option value="">Loading models...</option></select>
+  <div class="prompt-group">
+    <label>System</label>
+    <input type="text" id="system-prompt" placeholder="You are a helpful assistant." value="You are a helpful assistant.">
+  </div>
+  <div class="tts-group">
+    <div class="provider-group">
+      <label>TTS</label>
+      <select id="tts-provider" title="TTS provider"></select>
+    </div>
+    <select id="voice-select" title="Voice"></select>
+    <button class="btn-icon" id="btn-auto-tts" title="Auto-TTS: speak assistant responses automatically">&#128264;</button>
+    <div class="provider-group">
+      <label>STT</label>
+      <select id="stt-provider" title="STT provider"></select>
+    </div>
+  </div>
+  <div class="topbar-spacer"></div>
+  <button class="btn-clear" id="btn-clear" title="Clear conversation">Clear</button>
+  <button class="btn-side-toggle" id="btn-side" title="Toggle side panel">Info</button>
+</div>
+
+<!-- Main Layout -->
+<div class="main">
+  <div class="chat-area">
+    <div class="messages" id="messages">
+      <div class="welcome" id="welcome">
+        <h2>llming playground</h2>
+        <p>Select a model above and start chatting. Responses stream in real-time. Token usage and costs are tracked in the side panel.</p>
+      </div>
+    </div>
+    <div class="input-bar">
+      <!-- Normal input (hidden during recording) -->
+      <div id="input-normal" class="input-normal">
+        <textarea id="input" rows="1" placeholder="Type a message... (Enter to send, Shift+Enter for newline)"></textarea>
+      </div>
+      <!-- Recording overlay (shown during recording) -->
+      <div id="input-recording" class="input-recording" style="display:none">
+        <div class="rec-indicator">
+          <span class="rec-dot"></span>
+          <span class="rec-time" id="rec-time">0:00</span>
+        </div>
+        <canvas id="rec-waveform" class="rec-waveform"></canvas>
+        <div class="rec-label">Release to send</div>
+      </div>
+      <button id="btn-mic" class="btn-mic" title="Hold to talk">&#127908;</button>
+      <button class="btn-send" id="btn-send">Send</button>
+    </div>
+  </div>
+  <div class="side-panel" id="side-panel">
+    <h2>Token Usage</h2>
+    <div class="card" id="usage-card">
+      <div class="stat-row"><span class="label">Pending (est.)</span><span class="value" id="stat-pending" style="color:var(--text-dim)">0</span></div>
+      <div class="stat-row"><span class="label">Input tokens</span><span class="value" id="stat-input">0</span></div>
+      <div class="stat-row"><span class="label">Output tokens</span><span class="value" id="stat-output">0</span></div>
+      <div class="stat-row"><span class="label">Total tokens</span><span class="value" id="stat-total">0</span></div>
+      <div class="stat-row"><span class="label">Est. cost</span><span class="value cost" id="stat-cost">$0.0000</span></div>
+    </div>
+    <h2>Model Info</h2>
+    <div class="card" id="model-card">
+      <div id="model-info-content"><span style="color:var(--text-dim); font-size:13px;">Select a model to view details.</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// == State ==
+let allModels = {};
+let modelLookup = {};
+let conversationMessages = [];
+let totalInputTokens = 0;
+let totalOutputTokens = 0;
+let totalCost = 0;
+let isStreaming = false;
+
+// TTS/STT state
+let allVoices = [];
+let ttsProviders = [];
+let sttProviders = [];
+let autoTTSEnabled = false;
+let currentAudio = null;       // currently playing Audio element
+let currentPlayingBtn = null;  // currently active speaker button
+let wordHighlightRAF = null;   // requestAnimationFrame id for word highlighting
+
+// Push-to-talk recording state
+let mediaRecorder = null;
+let audioChunks = [];
+let audioContext = null;
+let analyser = null;
+let animFrameId = null;
+let recStartTime = 0;
+let recTimerInterval = null;
+let isRecording = false;
+let spaceBarRecording = false; // true if recording was triggered by space bar
+
+// == DOM refs ==
+const $select = document.getElementById('model-select');
+const $systemPrompt = document.getElementById('system-prompt');
+const $messages = document.getElementById('messages');
+const $welcome = document.getElementById('welcome');
+const $input = document.getElementById('input');
+const $btnSend = document.getElementById('btn-send');
+const $btnClear = document.getElementById('btn-clear');
+const $btnSide = document.getElementById('btn-side');
+const $sidePanel = document.getElementById('side-panel');
+const $statPending = document.getElementById('stat-pending');
+const $statInput = document.getElementById('stat-input');
+const $statOutput = document.getElementById('stat-output');
+const $statTotal = document.getElementById('stat-total');
+const $statCost = document.getElementById('stat-cost');
+const $modelInfo = document.getElementById('model-info-content');
+const $ttsProvider = document.getElementById('tts-provider');
+const $voiceSelect = document.getElementById('voice-select');
+const $btnAutoTTS = document.getElementById('btn-auto-tts');
+const $sttProvider = document.getElementById('stt-provider');
+const $btnMic = document.getElementById('btn-mic');
+const $inputNormal = document.getElementById('input-normal');
+const $inputRecording = document.getElementById('input-recording');
+const $recWaveform = document.getElementById('rec-waveform');
+const $recTime = document.getElementById('rec-time');
+
+// == Load Models ==
+async function loadModels() {
+  try {
+    const res = await fetch('/api/models');
+    allModels = await res.json();
+    $select.innerHTML = '';
+
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = '-- Select a model --';
+    $select.appendChild(defaultOpt);
+
+    for (const [provider, models] of Object.entries(allModels)) {
+      const group = document.createElement('optgroup');
+      group.label = provider.charAt(0).toUpperCase() + provider.slice(1);
+      for (const m of models) {
+        const key = `${m.provider}:${m.name}`;
+        modelLookup[key] = m;
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = m.label;
+        group.appendChild(opt);
+      }
+      $select.appendChild(group);
+    }
+  } catch (e) {
+    $select.innerHTML = '<option value="">Failed to load models</option>';
+    console.error('Failed to load models:', e);
+  }
+}
+
+// == Load TTS Voices & Providers ==
+async function loadTTSConfig() {
+  try {
+    const [provRes, voiceRes] = await Promise.all([
+      fetch('/api/tts/providers'),
+      fetch('/api/voices'),
+    ]);
+    const provData = await provRes.json();
+    // New API returns {providers: [...], models: [...]}; extract unique TTS/STT provider names
+    const models = provData.models || [];
+    ttsProviders = [...new Set(models.filter(m => m.media_type === 'tts').map(m => m.provider))];
+    sttProviders = [...new Set(models.filter(m => m.media_type === 'stt').map(m => m.provider))];
+    allVoices = await voiceRes.json();
+
+    // Populate TTS provider dropdown
+    $ttsProvider.innerHTML = '';
+    if (ttsProviders.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No TTS';
+      $ttsProvider.appendChild(opt);
+    } else {
+      for (const p of ttsProviders) {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p.charAt(0).toUpperCase() + p.slice(1);
+        $ttsProvider.appendChild(opt);
+      }
+      if (provData.default_tts) {
+        $ttsProvider.value = provData.default_tts;
+      }
+    }
+
+    // Populate STT provider dropdown
+    $sttProvider.innerHTML = '';
+    if (sttProviders.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No STT';
+      $sttProvider.appendChild(opt);
+    } else {
+      for (const p of sttProviders) {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p.charAt(0).toUpperCase() + p.slice(1);
+        $sttProvider.appendChild(opt);
+      }
+      if (provData.default_stt) {
+        $sttProvider.value = provData.default_stt;
+      }
+    }
+
+    updateVoiceDropdown();
+  } catch (e) {
+    console.error('Failed to load TTS config:', e);
+    $ttsProvider.innerHTML = '<option value="">No TTS</option>';
+    $voiceSelect.innerHTML = '<option value="">--</option>';
+    $sttProvider.innerHTML = '<option value="">No STT</option>';
+  }
+}
+
+function updateVoiceDropdown() {
+  const selectedProvider = $ttsProvider.value;
+  const filtered = allVoices.filter(v => !selectedProvider || v.provider === selectedProvider);
+
+  $voiceSelect.innerHTML = '';
+  if (filtered.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = 'No voices';
+    $voiceSelect.appendChild(opt);
+    return;
+  }
+  for (const v of filtered) {
+    const opt = document.createElement('option');
+    opt.value = v.id;
+    const genderTag = v.gender ? ` (${v.gender})` : '';
+    opt.textContent = v.name + genderTag;
+    opt.title = `${v.provider} / ${v.id}`;
+    $voiceSelect.appendChild(opt);
+  }
+}
+
+$ttsProvider.addEventListener('change', updateVoiceDropdown);
+
+// == Auto-TTS Toggle ==
+$btnAutoTTS.addEventListener('click', () => {
+  autoTTSEnabled = !autoTTSEnabled;
+  $btnAutoTTS.classList.toggle('active', autoTTSEnabled);
+  $btnAutoTTS.innerHTML = autoTTSEnabled ? '&#128266;' : '&#128264;';
+  $btnAutoTTS.title = autoTTSEnabled
+    ? 'Auto-TTS ON: assistant responses will be spoken'
+    : 'Auto-TTS OFF: click to enable';
+});
+
+// == Model Info Panel ==
+function updateModelInfo() {
+  const key = $select.value;
+  if (!key || !modelLookup[key]) {
+    $modelInfo.innerHTML = '<span style="color:var(--text-dim);font-size:13px;">Select a model to view details.</span>';
+    return;
+  }
+  const m = modelLookup[key];
+  const priceIn = (m.input_token_price || 0).toFixed(2);
+  const priceOut = (m.output_token_price || 0).toFixed(2);
+  let html = `
+    <div style="font-weight:600;font-size:14px;color:var(--text-bright);margin-bottom:6px;">${m.label}</div>
+    <div class="model-desc">${m.description}</div>
+    <div class="stat-row"><span class="label">Provider</span><span class="value">${m.provider}</span></div>
+    <div class="stat-row"><span class="label">API model</span><span class="value" style="font-size:11px;">${m.model}</span></div>
+    <div class="stat-row"><span class="label">Best for</span><span class="value">${m.best_use}</span></div>
+    <div class="stat-row"><span class="label">Input price</span><span class="value">$${priceIn}/M tok</span></div>
+    <div class="stat-row"><span class="label">Output price</span><span class="value">$${priceOut}/M tok</span></div>
+    <div class="stat-row"><span class="label">Max input</span><span class="value">${(m.max_input_tokens/1000).toFixed(0)}k</span></div>
+    <div class="stat-row"><span class="label">Max output</span><span class="value">${(m.max_output_tokens/1000).toFixed(0)}k</span></div>
+    <div class="stat-row"><span class="label">Reasoning</span><span class="value">${m.reasoning ? 'Yes' : 'No'}</span></div>
+    <div class="stat-row"><span class="label">Vision</span><span class="value">${m.supports_image_input ? 'Yes' : 'No'}</span></div>
+    <div style="margin-top:10px;">
+      <div class="stat-row"><span class="label">Speed</span><span class="value">${m.speed}/10</span></div>
+      <div class="meter-bar"><div class="fill speed" style="width:${m.speed * 10}%"></div></div>
+    </div>
+    <div style="margin-top:6px;">
+      <div class="stat-row"><span class="label">Quality</span><span class="value">${m.quality}/10</span></div>
+      <div class="meter-bar"><div class="fill quality" style="width:${m.quality * 10}%"></div></div>
+    </div>
+  `;
+  if (m.highlights && m.highlights.length > 0) {
+    html += '<div class="highlights">';
+    for (const h of m.highlights) html += `<span>${h}</span>`;
+    html += '</div>';
+  }
+  $modelInfo.innerHTML = html;
+}
+
+// == Usage Stats ==
+function updateUsageStats(inputTok, outputTok) {
+  totalInputTokens += inputTok;
+  totalOutputTokens += outputTok;
+
+  const key = $select.value;
+  const m = modelLookup[key];
+  if (m) {
+    const costIn = inputTok * (m.input_token_price / 1_000_000);
+    const costOut = outputTok * (m.output_token_price / 1_000_000);
+    totalCost += costIn + costOut;
+  }
+
+  $statInput.textContent = totalInputTokens.toLocaleString();
+  $statOutput.textContent = totalOutputTokens.toLocaleString();
+  $statTotal.textContent = (totalInputTokens + totalOutputTokens).toLocaleString();
+  $statCost.textContent = '$' + totalCost.toFixed(4);
+}
+
+function resetUsageStats() {
+  totalInputTokens = 0;
+  totalOutputTokens = 0;
+  totalCost = 0;
+  $statInput.textContent = '0';
+  $statOutput.textContent = '0';
+  $statTotal.textContent = '0';
+  $statCost.textContent = '$0.0000';
+}
+
+// == Markdown-ish Rendering ==
+function renderContent(text) {
+  let s = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    return `<pre><code>${code}</code></pre>`;
+  });
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  s = s.replace(/\n\n+/g, '</p><p>');
+  s = s.replace(/\n/g, '<br>');
+  s = '<p>' + s + '</p>';
+  s = s.replace(/<p>\s*<pre>/g, '<pre>');
+  s = s.replace(/<\/pre>\s*<\/p>/g, '</pre>');
+  return s;
+}
+
+// == Render content with word spans for TTS highlighting ==
+function renderContentWithWordSpans(text) {
+  // First render as normal HTML, then wrap top-level text words in spans
+  // We take a simpler approach: render normally, and for TTS highlighting
+  // we re-wrap words in the bubble when TTS is triggered
+  return renderContent(text);
+}
+
+// == TTS Playback ==
+function stopCurrentAudio() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+    currentAudio = null;
+  }
+  if (currentPlayingBtn) {
+    currentPlayingBtn.classList.remove('playing');
+    const waveEl = currentPlayingBtn.parentElement.querySelector('.tts-wave');
+    if (waveEl) waveEl.remove();
+    currentPlayingBtn = null;
+  }
+  if (wordHighlightRAF) {
+    cancelAnimationFrame(wordHighlightRAF);
+    wordHighlightRAF = null;
+  }
+  // Remove all word-active highlights
+  document.querySelectorAll('.word-active').forEach(el => el.classList.remove('word-active'));
+}
+
+async function speakText(text, speakBtn, bubble) {
+  // If already playing this button, stop
+  if (currentPlayingBtn === speakBtn) {
+    stopCurrentAudio();
+    return;
+  }
+
+  stopCurrentAudio();
+
+  const provider = $ttsProvider.value;
+  const voice = $voiceSelect.value;
+
+  speakBtn.classList.add('playing');
+  currentPlayingBtn = speakBtn;
+
+  // Show waveform animation
+  const waveEl = document.createElement('div');
+  waveEl.className = 'tts-wave';
+  for (let i = 0; i < 4; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    waveEl.appendChild(bar);
+  }
+  speakBtn.parentElement.appendChild(waveEl);
+
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice, provider, with_timings: true }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error('TTS error:', err.error || res.statusText);
+      stopCurrentAudio();
+      return;
+    }
+
+    const data = await res.json();
+    const audioSrc = `data:${data.content_type};base64,${data.audio_b64}`;
+    const audio = new Audio(audioSrc);
+    currentAudio = audio;
+
+    // Word-level highlighting if timings are available
+    const timings = data.word_timings || [];
+    if (timings.length > 0 && bubble) {
+      wrapBubbleWordsInSpans(bubble, text);
+      startWordHighlighting(audio, timings, bubble);
+    }
+
+    audio.addEventListener('ended', () => {
+      stopCurrentAudio();
+    });
+
+    audio.addEventListener('error', () => {
+      console.error('Audio playback error');
+      stopCurrentAudio();
+    });
+
+    await audio.play();
+  } catch (e) {
+    console.error('TTS fetch error:', e);
+    stopCurrentAudio();
+  }
+}
+
+function wrapBubbleWordsInSpans(bubble, rawText) {
+  // Walk text nodes and wrap individual words in <span class="tts-word" data-word-index="N">
+  // Simple approach: re-render with word spans
+  const html = bubble.innerHTML;
+  let wordIndex = 0;
+
+  // We'll replace text content in the bubble with span-wrapped words
+  // Only wrap words in text nodes (not inside <code>, <pre>)
+  const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT, null, false);
+  const textNodes = [];
+  while (walker.nextNode()) {
+    textNodes.push(walker.currentNode);
+  }
+
+  for (const node of textNodes) {
+    // Skip text inside <pre> or <code>
+    let parent = node.parentElement;
+    let inCode = false;
+    while (parent && parent !== bubble) {
+      if (parent.tagName === 'PRE' || parent.tagName === 'CODE') { inCode = true; break; }
+      parent = parent.parentElement;
+    }
+    if (inCode) continue;
+
+    const text = node.textContent;
+    if (!text.trim()) continue;
+
+    const frag = document.createDocumentFragment();
+    // Split by word boundaries, keeping whitespace
+    const parts = text.split(/(\s+)/);
+    for (const part of parts) {
+      if (/^\s+$/.test(part)) {
+        frag.appendChild(document.createTextNode(part));
+      } else if (part) {
+        const span = document.createElement('span');
+        span.className = 'tts-word';
+        span.dataset.wordIndex = wordIndex;
+        span.textContent = part;
+        frag.appendChild(span);
+        wordIndex++;
+      }
+    }
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+
+function startWordHighlighting(audio, timings, bubble) {
+  const wordSpans = bubble.querySelectorAll('.tts-word');
+  if (wordSpans.length === 0) return;
+
+  function highlight() {
+    if (!currentAudio || currentAudio !== audio) return;
+    const t = audio.currentTime;
+
+    // Find which timing entry we're in
+    wordSpans.forEach(span => span.classList.remove('word-active'));
+
+    for (let i = 0; i < timings.length && i < wordSpans.length; i++) {
+      const timing = timings[i];
+      if (t >= timing.start && t <= timing.end) {
+        wordSpans[i].classList.add('word-active');
+      }
+    }
+
+    wordHighlightRAF = requestAnimationFrame(highlight);
+  }
+
+  wordHighlightRAF = requestAnimationFrame(highlight);
+}
+
+// == Message Rendering ==
+function addMessageBubble(role, content) {
+  if ($welcome) $welcome.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'msg-wrapper';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  if (role === 'error') {
+    bubble.textContent = content;
+  } else {
+    bubble.innerHTML = renderContent(content);
+  }
+  wrapper.appendChild(bubble);
+
+  // Add speaker button for assistant messages
+  if (role === 'assistant') {
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    const speakBtn = document.createElement('button');
+    speakBtn.className = 'btn-speak';
+    speakBtn.innerHTML = '&#128264;';
+    speakBtn.title = 'Speak this message';
+    speakBtn.addEventListener('click', () => {
+      const rawText = content;
+      speakText(rawText, speakBtn, bubble);
+    });
+    actions.appendChild(speakBtn);
+    wrapper.appendChild(actions);
+  }
+
+  div.appendChild(wrapper);
+  $messages.appendChild(div);
+  scrollToBottom();
+  return { bubble, wrapper };
+}
+
+function addLoadingIndicator() {
+  if ($welcome) $welcome.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'msg assistant';
+  div.id = 'loading-msg';
+  const wrapper = document.createElement('div');
+  wrapper.className = 'msg-wrapper';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble loading-dots';
+  bubble.innerHTML = '<span></span><span></span><span></span>';
+  wrapper.appendChild(bubble);
+  div.appendChild(wrapper);
+  $messages.appendChild(div);
+  scrollToBottom();
+}
+
+function removeLoadingIndicator() {
+  const el = document.getElementById('loading-msg');
+  if (el) el.remove();
+}
+
+function scrollToBottom() {
+  requestAnimationFrame(() => {
+    $messages.scrollTop = $messages.scrollHeight;
+  });
+}
+
+function addErrorMessage(msg) {
+  addMessageBubble('error', msg);
+}
+
+// == Send Message ==
+async function sendMessage() {
+  const text = $input.value.trim();
+  if (!text || isStreaming) return;
+
+  const key = $select.value;
+  if (!key) {
+    addMessageBubble('error', 'Please select a model first.');
+    return;
+  }
+
+  const [provider, modelName] = [key.split(':')[0], key.split(':').slice(1).join(':')];
+  const systemPrompt = $systemPrompt.value.trim();
+
+  // Add user message
+  conversationMessages.push({ role: 'user', content: text });
+  addMessageBubble('user', text);
+  $input.value = '';
+  autoResize();
+
+  isStreaming = true;
+  $btnSend.disabled = true;
+  addLoadingIndicator();
+
+  try {
+    const res = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider,
+        model: modelName,
+        messages: conversationMessages,
+        system_prompt: systemPrompt,
+      }),
+    });
+
+    if (!res.ok) {
+      removeLoadingIndicator();
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      addMessageBubble('error', `Error: ${err.error || res.statusText}`);
+      conversationMessages.pop();
+      return;
+    }
+
+    removeLoadingIndicator();
+
+    // Create assistant bubble and stream into it
+    let assistantText = '';
+    const { bubble, wrapper } = addMessageBubble('assistant', '');
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6).trim();
+        if (!jsonStr) continue;
+        try {
+          const data = JSON.parse(jsonStr);
+          if (data.error) {
+            addMessageBubble('error', `Error: ${data.error}`);
+            break;
+          }
+          if (data.text) {
+            assistantText += data.text;
+            bubble.innerHTML = renderContent(assistantText);
+            scrollToBottom();
+          }
+          if (data.done && data.usage) {
+            updateUsageStats(data.usage.input_tokens || 0, data.usage.output_tokens || 0);
+          }
+        } catch (e) { /* ignore parse errors on partial data */ }
+      }
+    }
+
+    conversationMessages.push({ role: 'assistant', content: assistantText });
+    estimatePendingTokens();
+
+    // Update the speaker button click handler with the final text
+    const speakBtn = wrapper.querySelector('.btn-speak');
+    if (speakBtn) {
+      // Replace the old listener by cloning
+      const newBtn = speakBtn.cloneNode(true);
+      speakBtn.parentNode.replaceChild(newBtn, speakBtn);
+      newBtn.addEventListener('click', () => {
+        speakText(assistantText, newBtn, bubble);
+      });
+    }
+
+    // Auto-TTS: speak the response automatically if enabled
+    if (autoTTSEnabled && assistantText.trim()) {
+      const autoSpeakBtn = wrapper.querySelector('.btn-speak');
+      if (autoSpeakBtn) {
+        speakText(assistantText, autoSpeakBtn, bubble);
+      }
+    }
+
+  } catch (e) {
+    removeLoadingIndicator();
+    addMessageBubble('error', `Network error: ${e.message}`);
+    conversationMessages.pop();
+  } finally {
+    isStreaming = false;
+    $btnSend.disabled = false;
+    $input.focus();
+  }
+}
+
+// == Push-to-Talk Recording ==
+
+// Start recording
+async function startRecording() {
+  if (isRecording) return;
+  isRecording = true;
+  audioChunks = [];
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    // Set up Web Audio API for waveform visualization
+    audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(stream);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.7;
+    source.connect(analyser);
+
+    // Set up MediaRecorder
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : '';
+    mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+    mediaRecorder.start(250);
+
+    // Show recording UI
+    $inputNormal.style.display = 'none';
+    $inputRecording.style.display = 'flex';
+    $btnMic.classList.add('recording');
+
+    // Start timer
+    recStartTime = Date.now();
+    $recTime.textContent = '0:00';
+    recTimerInterval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - recStartTime) / 1000);
+      $recTime.textContent = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
+    }, 100);
+
+    // Start waveform drawing
+    drawWaveform();
+
+  } catch (e) {
+    isRecording = false;
+    console.error('Microphone access error:', e);
+    addErrorMessage('Microphone access denied or not available.');
+  }
+}
+
+// Draw real-time waveform on canvas
+function drawWaveform() {
+  if (!analyser || !isRecording) return;
+
+  const canvas = $recWaveform;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+
+  // Set canvas resolution to match display size
+  const displayW = canvas.clientWidth;
+  const displayH = canvas.clientHeight;
+  if (canvas.width !== displayW * dpr || canvas.height !== displayH * dpr) {
+    canvas.width = displayW * dpr;
+    canvas.height = displayH * dpr;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const bufLen = analyser.frequencyBinCount;
+  const data = new Uint8Array(bufLen);
+  analyser.getByteTimeDomainData(data);
+
+  const w = displayW;
+  const h = displayH;
+  ctx.clearRect(0, 0, w, h);
+
+  // Draw center line (subtle)
+  ctx.strokeStyle = 'rgba(220, 38, 38, 0.15)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, h / 2);
+  ctx.lineTo(w, h / 2);
+  ctx.stroke();
+
+  // Draw waveform
+  ctx.strokeStyle = '#dc2626';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+
+  const sliceWidth = w / bufLen;
+  let x = 0;
+  for (let i = 0; i < bufLen; i++) {
+    const v = data[i] / 128.0;
+    const y = v * h / 2;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+    x += sliceWidth;
+  }
+  ctx.lineTo(w, h / 2);
+  ctx.stroke();
+
+  // Draw glow effect
+  ctx.strokeStyle = 'rgba(220, 38, 38, 0.3)';
+  ctx.lineWidth = 6;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  x = 0;
+  for (let i = 0; i < bufLen; i++) {
+    const v = data[i] / 128.0;
+    const y = v * h / 2;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+    x += sliceWidth;
+  }
+  ctx.lineTo(w, h / 2);
+  ctx.stroke();
+
+  animFrameId = requestAnimationFrame(drawWaveform);
+}
+
+// Stop recording and auto-send
+async function stopRecordingAndSend() {
+  if (!isRecording) return;
+  isRecording = false;
+  spaceBarRecording = false;
+
+  // Stop visualization
+  if (animFrameId) {
+    cancelAnimationFrame(animFrameId);
+    animFrameId = null;
+  }
+  if (recTimerInterval) {
+    clearInterval(recTimerInterval);
+    recTimerInterval = null;
+  }
+
+  // Restore UI immediately
+  $inputNormal.style.display = '';
+  $inputRecording.style.display = 'none';
+  $btnMic.classList.remove('recording');
+
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+    // Clean up audio context
+    if (audioContext) { audioContext.close(); audioContext = null; }
+    return;
+  }
+
+  // Stop recorder and wait for final data
+  const stopPromise = new Promise(resolve => {
+    mediaRecorder.onstop = resolve;
+  });
+  mediaRecorder.stop();
+  mediaRecorder.stream.getTracks().forEach(t => t.stop());
+
+  await stopPromise;
+
+  // Close audio context
+  if (audioContext) { audioContext.close(); audioContext = null; }
+
+  const mimeType = mediaRecorder.mimeType || 'audio/webm';
+  const blob = new Blob(audioChunks, { type: mimeType });
+
+  // Ignore very short recordings (likely accidental)
+  if (blob.size < 1000) return;
+
+  // Show transcribing indicator
+  $input.value = 'Transcribing...';
+  $input.disabled = true;
+
+  // Send to STT
+  const sttProv = $sttProvider.value;
+  const sttUrl = sttProv ? `/api/stt?provider=${encodeURIComponent(sttProv)}` : '/api/stt';
+
+  try {
+    const form = new FormData();
+    form.append('file', blob, 'voice.webm');
+    const resp = await fetch(sttUrl, { method: 'POST', body: form });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      $input.value = '';
+      $input.disabled = false;
+      addErrorMessage('STT error: ' + (err.error || resp.statusText));
+      return;
+    }
+
+    const data = await resp.json();
+    $input.value = '';
+    $input.disabled = false;
+
+    if (data.text && data.text.trim()) {
+      // Auto-send the transcribed text
+      $input.value = data.text;
+      sendMessage();
+    }
+  } catch (e) {
+    $input.value = '';
+    $input.disabled = false;
+    addErrorMessage('STT network error: ' + e.message);
+  }
+}
+
+// Mic button: mousedown = start, mouseup = stop+send
+$btnMic.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  startRecording();
+});
+$btnMic.addEventListener('mouseup', () => {
+  stopRecordingAndSend();
+});
+$btnMic.addEventListener('mouseleave', () => {
+  if (isRecording && !spaceBarRecording) stopRecordingAndSend();
+});
+
+// Touch support for mobile
+$btnMic.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  startRecording();
+});
+$btnMic.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  stopRecordingAndSend();
+});
+$btnMic.addEventListener('touchcancel', () => {
+  if (isRecording) stopRecordingAndSend();
+});
+
+// Prevent context menu on long-press (mobile)
+$btnMic.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+});
+
+// Space bar: hold to talk when textarea is empty
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !e.repeat && !isRecording) {
+    // Check if textarea is focused and empty, or if focus is elsewhere
+    const textareaFocused = document.activeElement === $input;
+    const textareaEmpty = $input.value === '';
+    const inputDisabled = $input.disabled;
+
+    // Only trigger if textarea is empty (whether focused or not)
+    // and not inside another input/textarea/select
+    const activeTag = document.activeElement ? document.activeElement.tagName : '';
+    const inOtherInput = !textareaFocused && (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT');
+
+    if (!inOtherInput && !inputDisabled && textareaEmpty) {
+      e.preventDefault();
+      spaceBarRecording = true;
+      startRecording();
+    }
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'Space' && isRecording && spaceBarRecording) {
+    e.preventDefault();
+    stopRecordingAndSend();
+  }
+});
+
+// == Auto-resize textarea ==
+function autoResize() {
+  $input.style.height = 'auto';
+  $input.style.height = Math.min($input.scrollHeight, 160) + 'px';
+}
+
+// == Event Listeners ==
+function estimatePendingTokens() {
+  // Estimate tokens for all conversation messages + current input
+  // Rough heuristic: ~4 chars per token for English, ~3 for code
+  let totalChars = ($systemPrompt.value || '').length;
+  for (const m of conversationMessages) {
+    totalChars += (m.content || '').length;
+  }
+  totalChars += ($input.value || '').length;
+  const est = Math.ceil(totalChars / 3.5);
+  $statPending.textContent = est > 0 ? '~' + est.toLocaleString() : '0';
+}
+
+$input.addEventListener('input', () => { autoResize(); estimatePendingTokens(); });
+$input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+$btnSend.addEventListener('click', sendMessage);
+
+$btnClear.addEventListener('click', () => {
+  conversationMessages = [];
+  estimatePendingTokens();
+  $messages.innerHTML = '';
+  if ($welcome) {
+    $messages.appendChild($welcome);
+    $welcome.style.display = '';
+  }
+  resetUsageStats();
+  stopCurrentAudio();
+});
+
+$btnSide.addEventListener('click', () => {
+  $sidePanel.classList.toggle('collapsed');
+});
+
+// == IndexedDB Settings Persistence ==
+const DB_NAME = 'llming_playground';
+const DB_VERSION = 1;
+const STORE_NAME = 'settings';
+
+function openSettingsDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => { req.result.createObjectStore(STORE_NAME); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveSetting(key, value) {
+  try {
+    const db = await openSettingsDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(value, key);
+    db.close();
+  } catch { /* ignore */ }
+}
+
+async function loadSetting(key, fallback = null) {
+  try {
+    const db = await openSettingsDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const req = tx.objectStore(STORE_NAME).get(key);
+      req.onsuccess = () => resolve(req.result !== undefined ? req.result : fallback);
+      req.onerror = () => resolve(fallback);
+      db.close();
+    });
+  } catch { return fallback; }
+}
+
+// Save settings on change
+$select.addEventListener('change', () => { updateModelInfo(); saveSetting('model', $select.value); estimatePendingTokens(); });
+$systemPrompt.addEventListener('change', () => saveSetting('systemPrompt', $systemPrompt.value));
+if ($ttsProvider) $ttsProvider.addEventListener('change', () => saveSetting('ttsProvider', $ttsProvider.value));
+if ($voiceSelect) $voiceSelect.addEventListener('change', () => saveSetting('voice', $voiceSelect.value));
+if ($sttProvider) $sttProvider.addEventListener('change', () => saveSetting('sttProvider', $sttProvider.value));
+
+const DEFAULT_MODEL = 'openai:gpt-5.2';
+
+// == Init ==
+async function init() {
+  await loadModels();
+  await loadTTSConfig();
+
+  // Restore saved settings
+  const savedModel = await loadSetting('model', DEFAULT_MODEL);
+  if (savedModel && $select.querySelector(`option[value="${savedModel}"]`)) {
+    $select.value = savedModel;
+  } else if ($select.querySelector(`option[value="${DEFAULT_MODEL}"]`)) {
+    $select.value = DEFAULT_MODEL;
+  }
+  updateModelInfo();
+
+  const savedPrompt = await loadSetting('systemPrompt');
+  if (savedPrompt !== null) $systemPrompt.value = savedPrompt;
+
+  const savedTTS = await loadSetting('ttsProvider');
+  if (savedTTS && $ttsProvider) {
+    // Wait for TTS config to populate the dropdown, then restore
+    setTimeout(() => {
+      if ($ttsProvider.querySelector(`option[value="${savedTTS}"]`)) $ttsProvider.value = savedTTS;
+      // Also restore voice
+      loadSetting('voice').then(v => {
+        if (v && $voiceSelect && $voiceSelect.querySelector(`option[value="${v}"]`)) $voiceSelect.value = v;
+      });
+    }, 500);
+  }
+  const savedSTT = await loadSetting('sttProvider');
+  if (savedSTT && $sttProvider) {
+    setTimeout(() => {
+      if ($sttProvider.querySelector(`option[value="${savedSTT}"]`)) $sttProvider.value = savedSTT;
+    }, 500);
+  }
+
+  estimatePendingTokens();
+}
+init();
+</script>
+</body>
+</html>

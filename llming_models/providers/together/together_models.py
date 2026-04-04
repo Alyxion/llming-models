@@ -1,7 +1,6 @@
 """Together model configurations."""
-from typing import List
 
-from ..llm_provider_models import LLMInfo, ModelSize
+from ..llm_provider_models import ModelSize
 from llming_models.providers.together.deepseek.deepseek_models import TOGETHER_DEEPSEEK_MODELS
 
 

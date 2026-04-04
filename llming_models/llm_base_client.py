@@ -1,6 +1,9 @@
 """Base LLM client implementation."""
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Iterator, Optional, Union
+from collections.abc import AsyncIterator, Callable, Iterator
+from typing import Any
 
 from tiktoken import get_encoding
 
@@ -14,11 +17,11 @@ class LlmClient(ABC):
         self,
         model: str,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-        streaming: bool = False
-    ):
+        max_tokens: int | None = None,
+        streaming: bool = False,
+    ) -> None:
         """Initialize LLM client.
-        
+
         Args:
             model: Model name to use
             temperature: Temperature for responses
@@ -30,13 +33,13 @@ class LlmClient(ABC):
         self.max_tokens = max_tokens
         self.streaming = streaming
 
-    def estimate_tokens(self, text: str, role: Optional[str] = None) -> int:
+    def estimate_tokens(self, text: str, role: str | None = None) -> int:
         """Estimate number of tokens in text using cl100k base tokenizer.
-        
+
         Args:
             text: Text to estimate tokens for
             role: Optional role prefix (e.g. "system", "user", "assistant")
-            
+
         Returns:
             Estimated token count
         """
@@ -46,61 +49,66 @@ class LlmClient(ABC):
             text = f"{role}: {text}"
         return len(encoding.encode(text))
 
-    async def estimate_tokens_async(self, text: str, role: Optional[str] = None) -> int:
+    async def estimate_tokens_async(self, text: str, role: str | None = None) -> int:
         """Async version of estimate_tokens.
-        
+
         Args:
             text: Text to estimate tokens for
             role: Optional role prefix (e.g. "system", "user", "assistant")
-            
+
         Returns:
             Estimated token count
         """
         return self.estimate_tokens(text, role)
 
     @abstractmethod
-    def invoke(self, messages: list[Union[LlmSystemMessage, LlmHumanMessage, LlmAIMessage]]) -> LlmAIMessage:
+    def invoke(self, messages: list[LlmSystemMessage | LlmHumanMessage | LlmAIMessage]) -> LlmAIMessage:
         """Synchronously invoke the model.
-        
+
         Args:
             messages: List of messages to send
-            
+
         Returns:
             Model response text
         """
         pass
 
     @abstractmethod
-    async def ainvoke(self, messages: list[Union[LlmSystemMessage, LlmHumanMessage, LlmAIMessage]]) -> LlmAIMessage:
+    async def ainvoke(self, messages: list[LlmSystemMessage | LlmHumanMessage | LlmAIMessage]) -> LlmAIMessage:
         """Asynchronously invoke the model.
-        
+
         Args:
             messages: List of messages to send
-            
+
         Returns:
             Model response text
         """
         pass
 
     @abstractmethod
-    def stream(self, messages: list[Union[LlmSystemMessage, LlmHumanMessage, LlmAIMessage]]) -> Iterator[LlmMessageChunk]:
+    def stream(self, messages: list[LlmSystemMessage | LlmHumanMessage | LlmAIMessage]) -> Iterator[LlmMessageChunk]:
         """Stream responses from the model synchronously.
-        
+
         Args:
             messages: List of messages to send
-            
+
         Returns:
             Iterator yielding response chunks
         """
         pass
 
     @abstractmethod
-    async def astream(
+    def astream(
         self,
-        messages: list[Union[LlmSystemMessage, LlmHumanMessage, LlmAIMessage]],
-        usage_callback: Optional[callable] = None,
+        messages: list[LlmSystemMessage | LlmHumanMessage | LlmAIMessage],
+        usage_callback: Callable[..., Any] | None = None,
     ) -> AsyncIterator[LlmMessageChunk]:
         """Stream responses from the model asynchronously.
+
+        Implementations should be ``async def`` generators that ``yield``
+        :class:`LlmMessageChunk` instances.  The method is declared without
+        ``async`` here so that mypy accepts the ``AsyncIterator`` return type
+        from async-generator subclass methods.
 
         Args:
             messages: List of messages to send
@@ -111,4 +119,4 @@ class LlmClient(ABC):
         Returns:
             AsyncIterator yielding response chunks
         """
-        pass
+        ...

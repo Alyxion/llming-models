@@ -1,9 +1,12 @@
 """LLM Manager for managing available LLM providers and sessions."""
+from __future__ import annotations
+
 import logging
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING
 
 from .session import LLMConfig, ChatSession
-from .config import LLMUserConfig, LLMGlobalConfig
+from .config import LLMUserConfig
+from .credentials import LLMCredentials
 from .providers import (
     LLMInfo,
     get_provider,
@@ -19,21 +22,35 @@ logger = logging.getLogger(__name__)
 class LLMManager:
     """Manages multiple LLM providers and sessions."""
 
-    def __init__(self, *, user_config: LLMUserConfig | None = None, budget_manager: Optional["LLMBudgetManager"] = None):
-        """Initialize LLM manager."""
+    def __init__(
+        self,
+        *,
+        user_config: LLMUserConfig | None = None,
+        budget_manager: LLMBudgetManager | None = None,
+        credentials: LLMCredentials | None = None,
+    ) -> None:
+        """Initialize LLM manager.
+
+        :param user_config: Optional user configuration
+        :param budget_manager: Optional budget manager
+        :param credentials: Optional explicit credentials for providers.
+            When omitted, providers fall back to environment variables.
+        """
         # Initialize provider instances
         self.user_config = user_config or LLMUserConfig()
-        self.provider_cascade: List[str] = list(self.user_config.global_config.provider_cascade)
-        self.budget_manager: Optional["LLMBudgetManager"] = budget_manager
+        self.credentials = credentials
+        self.provider_cascade: list[str] = list(self.user_config.global_config.provider_cascade)
+        self.budget_manager: LLMBudgetManager | None = budget_manager
         if self.budget_manager is None and (len(self.user_config.budgets) > 0 or len(self.user_config.global_config.budgets) > 0):
             from llming_models.budget import LLMBudgetManager
             combined_list = self.user_config.budgets + self.user_config.global_config.budgets
             self.budget_manager = LLMBudgetManager(combined_list)
-        self.providers: Dict[str, BaseProvider] = {}
+        self.providers: dict[str, BaseProvider] = {}
         for provider_name in self.provider_cascade:
             try:
                 provider_class = get_provider(provider_name)
-                provider = provider_class()
+                creds = self.credentials.for_provider(provider_name) if self.credentials else None
+                provider = provider_class(credentials=creds)  # type: ignore[call-arg]
                 # Only add provider if it's available (has valid API key)
                 if provider.is_available:
                     # check if any model is available for the user
@@ -73,7 +90,7 @@ class LLMManager:
         label: str,
         api_key: str,
         base_url: str,
-        models: List[LLMInfo],
+        models: list[LLMInfo],
     ) -> None:
         """Register a generic OpenAI-compatible provider.
 
@@ -109,14 +126,14 @@ class LLMManager:
         )
         self.register_provider(provider)
 
-    def get_available_llms(self) -> List[LLMInfo]:
+    def get_available_llms(self) -> list[LLMInfo]:
         """Get deduplicated list of available LLMs, preferring cascade-priority providers.
 
         When the same model (by ``name`` field) is offered by multiple providers,
         only the version from the highest-cascade-priority provider is returned.
         """
         seen: dict[str, None] = {}
-        models: List[LLMInfo] = []
+        models: list[LLMInfo] = []
         for provider in self.providers.values():
             for info in provider.get_models():
                 if info.name not in seen:
@@ -124,7 +141,7 @@ class LLMManager:
                     models.append(info)
         return models
 
-    def get_cascade_debug_info(self) -> List[dict]:
+    def get_cascade_debug_info(self) -> list[dict]:
         """Return per-model cascade resolution info (debug / admin use).
 
         For every unique model name, shows which providers can serve it,
@@ -132,7 +149,7 @@ class LLMManager:
         is available.
         """
         # Collect all models across all providers
-        model_providers: dict[str, List[dict]] = {}
+        model_providers: dict[str, list[dict]] = {}
         for provider_name, provider in self.providers.items():
             for info in provider.get_models():
                 entry = {
@@ -155,7 +172,7 @@ class LLMManager:
             })
         return result
 
-    def get_providers_for_model(self, model: str) -> List[str]:
+    def get_providers_for_model(self, model: str) -> list[str]:
         """Get all providers that can serve a given model name, ordered by cascade priority.
 
         :param model: The model name or high-level name to look up. Alternatively, the model name can be specified as "provider:model".
@@ -252,7 +269,7 @@ class LLMManager:
         :raises ValueError: If model is not found or provider is not available
         """
         model_info = self.get_model_info(model)
-        return LLMConfig(
+        return LLMConfig(  # type: ignore[call-arg]
             provider=model_info.provider,
             model=model_info.model,
             base_url=model_info.api_base,
@@ -263,15 +280,15 @@ class LLMManager:
 
     def create_session(
         self,
-        config: Optional[LLMConfig] = None,
-        model: Optional[str] = None,
-        category: Optional[str] = None,
-        system_prompt: Optional[str] = None,
-        budget_manager: Optional["LLMBudgetManager"] = None,
-        user_id: Optional[str] = None
+        config: LLMConfig | None = None,
+        model: str | None = None,
+        category: str | None = None,
+        system_prompt: str | None = None,
+        budget_manager: LLMBudgetManager | None = None,
+        user_id: str | None = None,
     ) -> ChatSession:
         """Create a new chat session.
-        
+
         :param config: Optional LLMConfig to use. If not provided, model must be specified.
         :param model: Optional model name to use. Ignored if config is provided.
         :param category: Optional category to use. Ignored if config is provided.
@@ -279,7 +296,7 @@ class LLMManager:
         :param budget_manager: Optional budget manager to use. Defaults to predefined budget manager if provided
         :param user_id: Optional user ID to use
         :return: New ChatSession instance
-        
+
         :raises ValueError: If neither config nor model is provided, or if model is not found
         """
         if category is not None:
@@ -292,5 +309,7 @@ class LLMManager:
             if model is None:
                 raise ValueError("Either config or model must be provided")
             config = self.get_config_for_model(model)
-        
-        return ChatSession(config=config, system_prompt=system_prompt, budget_manager=budget_manager, user_id=user_id)
+
+        # Forward stored credentials for the resolved provider
+        creds = self.credentials.for_provider(config.provider) if self.credentials else None
+        return ChatSession(config=config, system_prompt=system_prompt, budget_manager=budget_manager, user_id=user_id, credentials=creds)

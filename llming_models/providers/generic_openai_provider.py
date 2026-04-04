@@ -21,12 +21,15 @@ Register custom providers at runtime via LLMManager::
         ],
     )
 """
-from typing import List, Optional
+from __future__ import annotations
+
+from typing import Any
 
 from llming_models.providers.llm_provider_base import BaseProvider
 from llming_models.llm_base_client import LlmClient
 from llming_models.providers.llm_provider_models import LLMInfo
 from llming_models.providers.openai_compat_client import OpenAICompatibleClient
+from llming_models.tools.llm_toolbox import LlmToolbox
 
 
 class GenericOpenAIProvider(BaseProvider):
@@ -42,34 +45,35 @@ class GenericOpenAIProvider(BaseProvider):
         label: str,
         api_key: str,
         base_url: str,
-        models: List[LLMInfo],
+        models: list[LLMInfo],
     ):
-        super().__init__(name, label)
-        self._api_key = api_key
-        self._base_url = base_url
+        from llming_models.credentials import ProviderCredentials
+        super().__init__(name, label, ProviderCredentials(api_key=api_key, base_url=base_url))
         self._models = models
 
     @property
     def is_available(self) -> bool:
-        return bool(self._api_key)
+        return self._credentials is not None and bool(self._credentials.api_key.get_secret_value())
 
-    def get_models(self) -> List[LLMInfo]:
+    def get_models(self) -> list[LLMInfo]:
         return self._models
 
     def create_client(
         self,
         model: str,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         streaming: bool = False,
-        base_url: Optional[str] = None,
-        **kwargs,
+        base_url: str | None = None,
+        toolboxes: list[LlmToolbox] | None = None,
+        **kwargs: Any,
     ) -> LlmClient:
+        assert self._credentials is not None
         return OpenAICompatibleClient(
-            api_key=self._api_key,
+            api_key=self._credentials.api_key.get_secret_value(),
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
             streaming=streaming,
-            base_url=base_url or self._base_url,
+            base_url=base_url or self._credentials.base_url,
         )

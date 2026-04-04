@@ -3,6 +3,9 @@
 Connection classes and MCPTestClient are imported from their submodules directly
 to avoid circular imports with tool_definition.py.
 """
+from __future__ import annotations
+
+from typing import Any
 
 from llming_models.tools.mcp.config import MCPServerConfig
 
@@ -11,7 +14,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazy imports for connection classes to break circular dependency."""
     _connection_names = {
         "MCPConnection", "MCPStdioConnection", "MCPHTTPConnection",

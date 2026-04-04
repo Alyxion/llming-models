@@ -1,12 +1,14 @@
+from __future__ import annotations
+
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any
 from zoneinfo import ZoneInfo
 from pymongo import ReturnDocument
 
 from .time_intervals import TimeIntervalHandler
 from .budget_limit import BudgetLimit
-from .budget_types import LimitPeriod
+from .budget_types import BudgetScope, LimitPeriod
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +19,19 @@ class MongoDBBudgetLimit(BudgetLimit):
     ``amount`` field exists on the document, it takes precedence over the
     constructor default. This allows per-user budget overrides without
     code changes.
+
+    Supports both GLOBAL (shared) and PER_USER (per user_id) scopes.
+    For PER_USER limits the MongoDB document key includes the ``user_id``
+    so each user has an independent counter.
     """
+    mongo_uri: str
+    mongo_db: str
+    mongo_collection: str
+    enable_logging: bool
+    user_id: str | None
+    _default_amount: float
+    _async_coll: Any | None
+
     def __init__(
         self,
         *,
@@ -27,23 +41,26 @@ class MongoDBBudgetLimit(BudgetLimit):
         mongo_uri: str,
         mongo_db: str,
         mongo_collection: str,
-        interval_value: Optional[int] = None,
+        interval_value: int | None = None,
         timezone_str: str = "UTC",
         enable_logging: bool = False,
-        user_id: Optional[str] = None
-    ):
-        super().__init__(name=name, amount=amount, period=period, interval_value=interval_value, timezone_str=timezone_str)
+        user_id: str | None = None,
+        scope: BudgetScope = BudgetScope.GLOBAL,
+    ) -> None:
+        super().__init__(name=name, amount=amount, period=period,
+                         interval_value=interval_value, timezone_str=timezone_str,
+                         scope=scope)
         if not mongo_uri or not mongo_db or not mongo_collection:
             raise ValueError("MongoDB URI, database, and collection are required")
         self.mongo_uri = mongo_uri
         self.mongo_db = mongo_db
         self.mongo_collection = mongo_collection
         self.enable_logging = enable_logging
-        self.user_id = user_id
+        self.user_id = user_id  # default user_id (for logging fallback)
         self._default_amount = amount  # constructor default, used as fallback
         self._async_coll = None
 
-    def _ensure_async_coll(self):
+    def _ensure_async_coll(self) -> Any:
         """Lazily get the shared async client and set up the collection handle."""
         if self._async_coll is None:
             from ._mongo import get_async_mongo_client
@@ -55,49 +72,58 @@ class MongoDBBudgetLimit(BudgetLimit):
         """Get current time in the configured timezone."""
         return datetime.now(timezone.utc).astimezone(ZoneInfo(self.timezone))
 
-    def _get_mongo_key(self, time: Optional[datetime] = None) -> dict:
-        """Generate the MongoDB document key for this budget and period (top-level doc)."""
+    def _get_mongo_key(self, time: datetime | None = None, user_id: str | None = None) -> dict[str, str]:
+        """Generate the MongoDB document key for this budget and period (top-level doc).
+
+        For PER_USER scoped limits the key includes ``user_id`` so each
+        user gets an independent document.
+        """
         if time is None:
             time = self._get_current_time()
-        return {
+        key: dict[str, str] = {
             "name": self.name,
             "period": self.period.value,
         }
+        if self.scope == BudgetScope.PER_USER:
+            effective_uid = user_id or self.user_id
+            if not effective_uid:
+                raise ValueError(f"user_id is required for PER_USER limit '{self.name}'")
+            key["user_id"] = effective_uid
+        return key
 
-    def _get_usage_path(self, time: Optional[datetime] = None) -> list:
+    def _get_usage_path(self, time: datetime | None = None) -> list[str]:
         """Generate the linear path for usage in the document."""
         if time is None:
             time = self._get_current_time()
         key_suffix = self._get_key_suffix(time)
         return ["usage", key_suffix]
 
-    def _get_expiry(self) -> Optional[timedelta]:
+    def _get_expiry(self) -> timedelta | None:
         """Get expiry duration based on period."""
         return TimeIntervalHandler.get_expiry(self.period, self.interval_value)
 
-    async def _get_effective_amount(self) -> float:
-        """Get the effective budget amount — stored override or constructor default."""
+    async def _get_effective_amount(self, user_id: str | None = None) -> float:
+        """Get the effective budget amount -- stored override or constructor default."""
         try:
             coll = self._ensure_async_coll()
-            doc = await coll.find_one(self._get_mongo_key(), {"amount": 1})
+            doc = await coll.find_one(self._get_mongo_key(user_id=user_id), {"amount": 1})
             if doc and "amount" in doc:
                 return float(doc["amount"])
         except Exception:
             pass
         return self._default_amount
 
-    async def get_available_budget_async(self) -> float:
+    async def get_available_budget_async(self, user_id: str | None = None) -> float:
         """Get available budget for the current period."""
         logger.debug(f"Getting available budget (async) for limit '{self.name}' (period: {self.period.value})")
         current_time = self._get_current_time()
-        key = self._get_mongo_key(current_time)
+        key = self._get_mongo_key(current_time, user_id=user_id)
         usage_path = self._get_usage_path(current_time)
         field = ".".join(usage_path + ["used"])
         try:
             coll = self._ensure_async_coll()
             doc = await coll.find_one(key, {field: 1, "amount": 1})
-            # Use stored amount if present, else constructor default
-            effective_amount = float(doc["amount"]) if doc and "amount" in doc else self._default_amount
+            effective_amount = await self._get_effective_amount(user_id=user_id)
             used = 0.0
             d = doc
             for part in usage_path:
@@ -115,23 +141,25 @@ class MongoDBBudgetLimit(BudgetLimit):
         except Exception as e:
             raise RuntimeError(f"Failed to get available budget from MongoDB (async): {e}")
 
-    async def reserve_budget_async(self, amount: float) -> bool:
+    async def reserve_budget_async(self, amount: float, user_id: str | None = None) -> bool:
         """Reserve budget for an operation."""
-        effective_amount = await self._get_effective_amount()
+        if amount <= 0:
+            return False
+        effective_amount = await self._get_effective_amount(user_id=user_id)
         logger.debug(f"Attempting to reserve {amount} (async) from limit '{self.name}' (period: {self.period.value})")
         if amount > effective_amount:
             logger.debug(f"Amount {amount} exceeds total budget {effective_amount} for limit '{self.name}'")
             return False
 
         current_time = self._get_current_time()
-        key = self._get_mongo_key(current_time)
+        key = self._get_mongo_key(current_time, user_id=user_id)
         usage_path = self._get_usage_path(current_time)
         field = ".".join(usage_path + ["used"])
         now = current_time
         coll = self._ensure_async_coll()
 
         try:
-            update = {
+            update: dict[str, Any] = {
                 "$inc": {field: amount},
                 "$setOnInsert": {"created_at": now},
             }
@@ -159,15 +187,17 @@ class MongoDBBudgetLimit(BudgetLimit):
         except Exception as e:
             raise RuntimeError(f"Failed to reserve budget in MongoDB (async): {e}")
 
-    async def return_budget_async(self, amount: float) -> None:
+    async def return_budget_async(self, amount: float, user_id: str | None = None) -> None:
         """Return unused budget."""
-        key = self._get_mongo_key()
+        if amount <= 0:
+            return
+        key = self._get_mongo_key(user_id=user_id)
         usage_path = self._get_usage_path()
         field = ".".join(usage_path + ["used"])
         coll = self._ensure_async_coll()
 
         try:
-            update = {
+            update: dict[str, Any] = {
                 "$inc": {field: -amount},
             }
             result = await coll.find_one_and_update(
@@ -192,7 +222,7 @@ class MongoDBBudgetLimit(BudgetLimit):
 
     async def reset_async(self) -> None:
         """Reset budget to initial amount (remove all usage records for this budget)."""
-        pattern = {
+        pattern: dict[str, str] = {
             "name": self.name,
             "period": self.period.value,
         }
@@ -238,7 +268,7 @@ class MongoDBBudgetLimit(BudgetLimit):
         except Exception:
             return 0.0
 
-    async def log_usage_async(self, *, model_name: str, tokens_input: int, tokens_output: int, costs: float, duration_ms: Optional[float] = None, user_id: Optional[str] = None, operation_type: Optional[str] = None) -> None:
+    async def log_usage_async(self, *, model_name: str, tokens_input: int, tokens_output: int, costs: float, duration_ms: float | None = None, user_id: str | None = None, operation_type: str | None = None) -> None:
         """Log usage information for a completed request."""
         if not self.enable_logging:
             return
@@ -248,7 +278,7 @@ class MongoDBBudgetLimit(BudgetLimit):
         usage_path = self._get_usage_path(now)
         logs_field = ".".join(usage_path + ["logs"])
 
-        log_entry = {
+        log_entry: dict[str, Any] = {
             "timestamp": now,
             "model": model_name,
             "tokens_input": tokens_input,

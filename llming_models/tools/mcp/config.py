@@ -1,5 +1,7 @@
 """Configuration for connecting to MCP servers."""
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
+
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -7,31 +9,31 @@ from pydantic import BaseModel, ConfigDict, Field
 class MCPServerConfig(BaseModel):
     """Configuration for connecting to an MCP server."""
     # Stdio mode
-    command: Optional[str] = Field(None, description="Command to execute for stdio transport")
-    args: Optional[List[str]] = Field(None, description="Arguments for the command")
-    env: Optional[Dict[str, str]] = Field(None, description="Environment variables to set")
-    cwd: Optional[str] = Field(None, description="Working directory for the command")
+    command: str | None = Field(default=None, description="Command to execute for stdio transport")
+    args: list[str] | None = Field(default=None, description="Arguments for the command")
+    env: dict[str, str] | None = Field(default=None, description="Environment variables to set")
+    cwd: str | None = Field(default=None, description="Working directory for the command")
 
     # HTTP mode
-    url: Optional[str] = Field(None, description="URL for HTTP/SSE transport")
-    api_key: Optional[str] = Field(None, description="API key for HTTP authentication")
-    headers: Optional[Dict[str, str]] = Field(None, description="Additional HTTP headers")
+    url: str | None = Field(default=None, description="URL for HTTP/SSE transport")
+    api_key: str | None = Field(default=None, description="API key for HTTP authentication")
+    headers: dict[str, str] | None = Field(default=None, description="Additional HTTP headers")
 
     # In-process mode
-    server_instance: Optional[Any] = Field(None, exclude=True, description="In-process MCP server instance")
+    server_instance: Any | None = Field(default=None, exclude=True, description="In-process MCP server instance")
 
     # UI / toggle metadata
-    label: Optional[str] = Field(None, description="Display name (e.g. 'Stock Agent')")
-    description: Optional[str] = Field(None, description="Short description for UI")
-    category: Optional[str] = Field(None, description="Grouping category (e.g. 'Experimental')")
-    enabled_by_default: bool = Field(False, description="If True, tools are enabled on discovery; otherwise opt-in")
-    default_enabled_tools: Optional[List[str]] = Field(None, description="When set, only these tools are enabled by default (per-tool control). Requires enabled_by_default=True.")
-    exclude_providers: Optional[List[str]] = Field(None, description="Providers this MCP does NOT support. None = all providers.")
-    requires_providers: Optional[List[str]] = Field(None, description="If set, MCP tools only work with these providers (respects PROVIDER_COMPAT). None = all providers.")
-    collapse_tools: bool = Field(False, description="If True, all tools are shown as a single toggle in the UI instead of individual entries.")
-    flyout: bool = Field(False, description="If True, tools get their own top-level flyout in the plus menu")
-    avatar: Optional[str] = Field(None, description="Custom avatar icon path (relative to staticBase, e.g. 'models/lisa-avatar.gif'). When set, replaces the model icon in chat message headers when this MCP's tools are used.")
-    auto_activate_keywords: Optional[List[str]] = Field(None, description="Keywords that trigger auto-activation of this MCP. When a user message matches any keyword (case-insensitive), the MCP tools are enabled for the session.")
+    label: str | None = Field(default=None, description="Display name (e.g. 'Stock Agent')")
+    description: str | None = Field(default=None, description="Short description for UI")
+    category: str | None = Field(default=None, description="Grouping category (e.g. 'Experimental')")
+    enabled_by_default: bool = Field(default=False, description="If True, tools are enabled on discovery; otherwise opt-in")
+    default_enabled_tools: list[str] | None = Field(default=None, description="When set, only these tools are enabled by default (per-tool control). Requires enabled_by_default=True.")
+    exclude_providers: list[str] | None = Field(default=None, description="Providers this MCP does NOT support. None = all providers.")
+    requires_providers: list[str] | None = Field(default=None, description="If set, MCP tools only work with these providers (respects PROVIDER_COMPAT). None = all providers.")
+    collapse_tools: bool = Field(default=False, description="If True, all tools are shown as a single toggle in the UI instead of individual entries.")
+    flyout: bool = Field(default=False, description="If True, tools get their own top-level flyout in the plus menu")
+    avatar: str | None = Field(default=None, description="Custom avatar icon path (relative to staticBase, e.g. 'models/lisa-avatar.gif'). When set, replaces the model icon in chat message headers when this MCP's tools are used.")
+    auto_activate_keywords: list[str] | None = Field(default=None, description="Keywords that trigger auto-activation of this MCP. When a user message matches any keyword (case-insensitive), the MCP tools are enabled for the session.")
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

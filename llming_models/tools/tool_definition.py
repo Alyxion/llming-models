@@ -6,8 +6,11 @@ and Anthropic's Agents API, while supporting multiple tool sources:
 - Provider-native tools (e.g., OpenAI's web_search)
 - MCP servers via stdio or HTTP
 """
+from __future__ import annotations
+
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,12 +29,12 @@ class ToolSource(str, Enum):
 
 class ToolUIMetadata(BaseModel):
     """UI-related metadata for tool display."""
-    icon: Optional[str] = Field(None, description="Icon path, emoji, or icon name")
-    display_name: Optional[str] = Field(None, description="Human-readable name for UI")
-    description: Optional[str] = Field(None, description="Short description for UI menu (full description goes to LLM)")
-    category: Optional[str] = Field(None, description="Category for grouping (search, media, file, etc.)")
-    hidden: bool = Field(False, description="If True, tool is not shown in UI")
-    color: Optional[str] = Field(None, description="Optional accent color for UI")
+    icon: str | None = Field(default=None, description="Icon path, emoji, or icon name")
+    display_name: str | None = Field(default=None, description="Human-readable name for UI")
+    description: str | None = Field(default=None, description="Short description for UI menu (full description goes to LLM)")
+    category: str | None = Field(default=None, description="Category for grouping (search, media, file, etc.)")
+    hidden: bool = Field(default=False, description="If True, tool is not shown in UI")
+    color: str | None = Field(default=None, description="Optional accent color for UI")
 
 
 # Providers that are API-compatible with another provider's tools
@@ -47,24 +50,24 @@ class ToolDefinition(BaseModel):
     # MCP-compatible core fields
     name: str = Field(..., description="Unique tool identifier")
     description: str = Field(..., description="Human-readable description of what the tool does")
-    inputSchema: Dict[str, Any] = Field(
+    inputSchema: dict[str, Any] = Field(
         default_factory=lambda: {"type": "object", "properties": {}},
         description="JSON Schema for tool parameters"
     )
 
     # Execution configuration
-    source: ToolSource = Field(ToolSource.BUILTIN, description="How the tool is executed")
-    callback: Optional[Callable[..., Any]] = Field(None, description="Python callback for BUILTIN tools", exclude=True)
-    mcp_server: Optional[MCPServerConfig] = Field(None, description="MCP server config for MCP_* tools")
-    provider_config: Optional[Dict[str, Any]] = Field(None, description="Provider-specific config for PROVIDER_NATIVE tools")
+    source: ToolSource = Field(default=ToolSource.BUILTIN, description="How the tool is executed")
+    callback: Callable[..., Any] | None = Field(default=None, description="Python callback for BUILTIN tools", exclude=True)
+    mcp_server: MCPServerConfig | None = Field(default=None, description="MCP server config for MCP_* tools")
+    provider_config: dict[str, Any] | None = Field(default=None, description="Provider-specific config for PROVIDER_NATIVE tools")
 
     # Extensions
-    ui: Optional[ToolUIMetadata] = Field(None, description="UI display metadata")
-    fixed_cost_usd: Optional[float] = Field(None, description="Fixed cost per invocation in USD")
-    requires_provider: Optional[str] = Field(None, description="If set, tool only works with this provider (singular, legacy)")
-    requires_providers: Optional[List[str]] = Field(None, description="If set, tool only works with these providers (respects PROVIDER_COMPAT). None = all.")
-    exclude_providers: Optional[List[str]] = Field(None, description="Providers this tool does NOT support. None = no exclusions.")
-    realtime_enabled: bool = Field(False, description="If True, tool is available in live voice (Realtime API) sessions")
+    ui: ToolUIMetadata | None = Field(default=None, description="UI display metadata")
+    fixed_cost_usd: float | None = Field(default=None, description="Fixed cost per invocation in USD")
+    requires_provider: str | None = Field(default=None, description="If set, tool only works with this provider (singular, legacy)")
+    requires_providers: list[str] | None = Field(default=None, description="If set, tool only works with these providers (respects PROVIDER_COMPAT). None = all.")
+    exclude_providers: list[str] | None = Field(default=None, description="Providers this tool does NOT support. None = no exclusions.")
+    realtime_enabled: bool = Field(default=False, description="If True, tool is available in live voice (Realtime API) sessions")
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -83,7 +86,7 @@ class ToolDefinition(BaseModel):
             return False
         return True
 
-    def to_mcp_dict(self) -> Dict[str, Any]:
+    def to_mcp_dict(self) -> dict[str, Any]:
         """Convert to MCP-compatible tool dictionary."""
         return {
             "name": self.name,
@@ -104,7 +107,7 @@ class ToolDefinition(BaseModel):
             return self.ui.description
         return self.description
 
-    def get_icon(self) -> Optional[str]:
+    def get_icon(self) -> str | None:
         """Get the icon for UI."""
         return self.ui.icon if self.ui else None
 

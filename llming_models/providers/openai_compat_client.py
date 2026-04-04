@@ -7,11 +7,11 @@ that don't support OpenAI's Responses API.
 from __future__ import annotations
 
 import itertools
-import json
 import logging
 from typing import (
     Any,
     AsyncIterator,
+    Callable,
     Iterator,
     List,
     Union,
@@ -156,7 +156,7 @@ class OpenAICompatibleClient(LlmClient):
     async def astream(
         self,
         messages: List[Union[LlmSystemMessage, LlmHumanMessage, LlmAIMessage]],
-        usage_callback: Optional[callable] = None,
+        usage_callback: Optional[Callable[..., Any]] = None,
     ) -> AsyncIterator[LlmMessageChunk]:
         kwargs = self._build_kwargs(messages, stream=True)
         chunk_index = itertools.count()

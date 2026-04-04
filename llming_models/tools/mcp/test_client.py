@@ -5,27 +5,27 @@ MCP Test Client for testing MCP servers via subprocess.
 Based on the pattern from nice-vibes MCP implementation.
 Communicates with MCP servers using JSON-RPC over stdio.
 """
+from __future__ import annotations
 
 import asyncio
 import json
 import sys
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 class MCPTestClient:
     """Test client for MCP servers via subprocess."""
 
-    def __init__(self, server_module: str = "llming_models.tools.mcp.sample_server"):
+    def __init__(self, server_module: str = "llming_models.tools.mcp.sample_server") -> None:
         """Initialize the test client.
 
         Args:
             server_module: Python module path to the MCP server
         """
         self.server_module = server_module
-        self.process: Optional[asyncio.subprocess.Process] = None
+        self.process: asyncio.subprocess.Process | None = None
         self.request_id = 0
-        self._stderr_task: Optional[asyncio.Task] = None
+        self._stderr_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         """Start the MCP server subprocess."""
@@ -57,7 +57,7 @@ class MCPTestClient:
             except Exception:
                 break
 
-    async def _send_request(self, method: str, params: Optional[dict] = None) -> dict:
+    async def _send_request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Send a JSON-RPC request and wait for response."""
         if not self.process or not self.process.stdin or not self.process.stdout:
             raise RuntimeError("Server not started")
@@ -84,7 +84,7 @@ class MCPTestClient:
         response = json.loads(response_line.decode())
         return response
 
-    async def _initialize(self) -> dict:
+    async def _initialize(self) -> dict[str, Any]:
         """Initialize the MCP connection."""
         response = await self._send_request("initialize", {
             "protocolVersion": "2024-11-05",
@@ -103,21 +103,22 @@ class MCPTestClient:
             "jsonrpc": "2.0",
             "method": "notifications/initialized"
         }
+        assert self.process is not None and self.process.stdin is not None
         self.process.stdin.write(json.dumps(notification).encode() + b"\n")
         await self.process.stdin.drain()
 
         return response.get("result", {})
 
-    async def list_tools(self) -> list[dict]:
+    async def list_tools(self) -> list[dict[str, Any]]:
         """List available tools."""
         response = await self._send_request("tools/list")
         if "error" in response:
             raise RuntimeError(f"Error listing tools: {response['error']}")
         return response.get("result", {}).get("tools", [])
 
-    async def call_tool(self, name: str, arguments: Optional[dict] = None) -> dict:
+    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         """Call a tool and return the result."""
-        params = {"name": name}
+        params: dict[str, Any] = {"name": name}
         if arguments:
             params["arguments"] = arguments
 
@@ -126,7 +127,7 @@ class MCPTestClient:
             return {"error": response["error"]}
         return response.get("result", {})
 
-    async def call_tool_text(self, name: str, arguments: Optional[dict] = None) -> str:
+    async def call_tool_text(self, name: str, arguments: dict[str, Any] | None = None) -> str:
         """Call a tool and return text content only."""
         result = await self.call_tool(name, arguments)
         if "error" in result:
@@ -156,7 +157,7 @@ class MCPTestClient:
                 self.process.kill()
 
 
-async def interactive_session():
+async def interactive_session() -> None:
     """Run an interactive test session."""
     client = MCPTestClient()
 
@@ -205,14 +206,14 @@ async def interactive_session():
 
                 # Get tool info
                 tools = await client.list_tools()
-                tool = next((t for t in tools if t["name"] == tool_name), None)
+                matched_tool = next((t for t in tools if t["name"] == tool_name), None)
 
-                if not tool:
+                if not matched_tool:
                     print(f"Unknown tool: {tool_name}")
                     continue
 
                 # Build arguments
-                schema = tool.get("inputSchema", {})
+                schema = matched_tool.get("inputSchema", {})
                 properties = schema.get("properties", {})
                 required = schema.get("required", [])
 

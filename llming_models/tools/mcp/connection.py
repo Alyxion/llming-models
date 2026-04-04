@@ -3,13 +3,15 @@
 This module provides connection classes for communicating with MCP servers
 over stdio (local processes) or HTTP (remote servers).
 """
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import os
 import subprocess
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from llming_models.tools.mcp.config import MCPServerConfig
 from llming_models.tools.tool_definition import ToolDefinition, ToolSource
@@ -26,12 +28,12 @@ class MCPConnection(ABC):
         pass
 
     @abstractmethod
-    async def list_tools(self) -> List[ToolDefinition]:
+    async def list_tools(self) -> list[ToolDefinition]:
         """List available tools from the MCP server."""
         pass
 
     @abstractmethod
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         """Call a tool with the given arguments."""
         pass
 
@@ -46,9 +48,13 @@ class MCPStdioConnection(MCPConnection):
 
     Spawns a child process and communicates via stdin/stdout using
     JSON-RPC 2.0 protocol as defined by MCP.
+
+    WARNING: This class spawns arbitrary commands as child processes.
+    MCP server configurations should only come from trusted sources.
+    A malicious configuration could execute arbitrary code on the host.
     """
 
-    def __init__(self, config: MCPServerConfig):
+    def __init__(self, config: MCPServerConfig) -> None:
         """Initialize stdio connection.
 
         Args:
@@ -58,10 +64,10 @@ class MCPStdioConnection(MCPConnection):
             raise ValueError("MCPServerConfig must have 'command' for stdio transport")
 
         self.config = config
-        self.process: Optional[subprocess.Popen] = None
+        self.process: subprocess.Popen[str] | None = None
         self._request_id = 0
-        self._pending_requests: Dict[int, asyncio.Future] = {}
-        self._reader_task: Optional[asyncio.Task] = None
+        self._pending_requests: dict[int, asyncio.Future[Any]] = {}
+        self._reader_task: asyncio.Task[None] | None = None
         self._started = False
 
     async def start(self) -> None:
@@ -69,8 +75,10 @@ class MCPStdioConnection(MCPConnection):
         if self._started:
             return
 
-        # Build command
+        # Build command (command is guaranteed non-None by __init__ check)
+        assert self.config.command is not None
         cmd = [self.config.command] + (self.config.args or [])
+        logger.warning("MCP: Spawning process: %s (ensure this command is from a trusted source)", cmd[0])
 
         # Build environment
         env = os.environ.copy()
@@ -98,7 +106,7 @@ class MCPStdioConnection(MCPConnection):
 
         logger.info(f"MCP stdio connection started: {self.config.command}")
 
-    async def _initialize(self) -> Dict[str, Any]:
+    async def _initialize(self) -> dict[str, Any]:
         """Send MCP initialize request and initialized notification."""
         result = await self._send_request("initialize", {
             "protocolVersion": "2024-11-05",
@@ -112,7 +120,7 @@ class MCPStdioConnection(MCPConnection):
         await self._send_notification("notifications/initialized", {})
         return result
 
-    async def _send_notification(self, method: str, params: Dict[str, Any]) -> None:
+    async def _send_notification(self, method: str, params: dict[str, Any]) -> None:
         """Send a JSON-RPC notification (no response expected)."""
         if not self.process or not self.process.stdin:
             raise MCPError("Connection not started")
@@ -131,6 +139,8 @@ class MCPStdioConnection(MCPConnection):
         """Read JSON-RPC responses from stdout."""
         try:
             while self.process and self.process.poll() is None:
+                if not self.process.stdout:
+                    break
                 line = await asyncio.get_event_loop().run_in_executor(
                     None, self.process.stdout.readline
                 )
@@ -154,7 +164,7 @@ class MCPStdioConnection(MCPConnection):
         except Exception as e:
             logger.error(f"MCP reader error: {e}")
 
-    async def _send_request(self, method: str, params: Dict[str, Any]) -> Any:
+    async def _send_request(self, method: str, params: dict[str, Any]) -> Any:
         """Send a JSON-RPC request and wait for response."""
         if not self.process or not self.process.stdin:
             raise MCPError("Connection not started")
@@ -170,7 +180,7 @@ class MCPStdioConnection(MCPConnection):
         }
 
         # Create future for response
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
         self._pending_requests[request_id] = future
 
         # Send request
@@ -185,10 +195,10 @@ class MCPStdioConnection(MCPConnection):
             self._pending_requests.pop(request_id, None)
             raise MCPError(f"Request {method} timed out")
 
-    async def list_tools(self) -> List[ToolDefinition]:
+    async def list_tools(self) -> list[ToolDefinition]:
         """List available tools from the MCP server."""
         result = await self._send_request("tools/list", {})
-        tools = []
+        tools: list[ToolDefinition] = []
 
         for tool_data in result.get("tools", []):
             tool = ToolDefinition(
@@ -202,7 +212,7 @@ class MCPStdioConnection(MCPConnection):
 
         return tools
 
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         """Call a tool with the given arguments."""
         result = await self._send_request("tools/call", {
             "name": name,
@@ -242,7 +252,7 @@ class MCPHTTPConnection(MCPConnection):
     optionally SSE for streaming responses.
     """
 
-    def __init__(self, config: MCPServerConfig):
+    def __init__(self, config: MCPServerConfig) -> None:
         """Initialize HTTP connection.
 
         Args:
@@ -252,7 +262,7 @@ class MCPHTTPConnection(MCPConnection):
             raise ValueError("MCPServerConfig must have 'url' for HTTP transport")
 
         self.config = config
-        self._session = None
+        self._session: Any = None
         self._started = False
 
     async def start(self) -> None:
@@ -270,7 +280,7 @@ class MCPHTTPConnection(MCPConnection):
         except ImportError:
             raise MCPError("aiohttp is required for MCP HTTP connections")
 
-    def _build_headers(self) -> Dict[str, str]:
+    def _build_headers(self) -> dict[str, str]:
         """Build HTTP headers for requests."""
         headers = {"Content-Type": "application/json"}
 
@@ -282,7 +292,7 @@ class MCPHTTPConnection(MCPConnection):
 
         return headers
 
-    async def list_tools(self) -> List[ToolDefinition]:
+    async def list_tools(self) -> list[ToolDefinition]:
         """List available tools from the MCP server."""
         if not self._session:
             raise MCPError("Connection not started")
@@ -292,7 +302,7 @@ class MCPHTTPConnection(MCPConnection):
                 raise MCPError(f"Failed to list tools: {resp.status}")
 
             result = await resp.json()
-            tools = []
+            tools: list[ToolDefinition] = []
 
             for tool_data in result.get("tools", []):
                 tool = ToolDefinition(
@@ -306,7 +316,7 @@ class MCPHTTPConnection(MCPConnection):
 
             return tools
 
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         """Call a tool with the given arguments."""
         if not self._session:
             raise MCPError("Connection not started")
@@ -347,7 +357,7 @@ class InProcessMCPServer(ABC):
     """
 
     @abstractmethod
-    async def list_tools(self) -> List[Dict[str, Any]]:
+    async def list_tools(self) -> list[dict[str, Any]]:
         """List available tools.
 
         Returns:
@@ -356,7 +366,7 @@ class InProcessMCPServer(ABC):
         pass
 
     @abstractmethod
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> str:
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
         """Call a tool by name.
 
         Args:
@@ -368,7 +378,7 @@ class InProcessMCPServer(ABC):
         """
         pass
 
-    async def get_prompt_hints(self) -> List[str]:
+    async def get_prompt_hints(self) -> list[str]:
         """Optional prompt snippets appended to the system prompt.
 
         Used to tell the LLM about custom fenced code block languages
@@ -377,7 +387,7 @@ class InProcessMCPServer(ABC):
         """
         return []
 
-    async def get_client_renderers(self) -> List[Dict[str, str]]:
+    async def get_client_renderers(self) -> list[dict[str, str]]:
         """Optional client-side renderers for custom fenced code block languages.
 
         Returns a list of dicts, each with:
@@ -401,20 +411,21 @@ class MCPInProcessConnection(MCPConnection):
     and execution pipeline without subprocess or network overhead.
     """
 
-    def __init__(self, config: MCPServerConfig):
+    def __init__(self, config: MCPServerConfig) -> None:
         self.config = config
+        assert config.server_instance is not None, "MCPServerConfig must have server_instance for in-process transport"
         self.server: InProcessMCPServer = config.server_instance
 
     async def start(self) -> None:
         """No-op — in-process server is already running."""
         logger.info(f"MCP in-process connection ready: {self.config.label or 'unnamed'}")
 
-    async def list_tools(self) -> List[ToolDefinition]:
+    async def list_tools(self) -> list[ToolDefinition]:
         """List available tools from the in-process server."""
         from llming_models.tools.tool_definition import ToolUIMetadata
 
         raw_tools = await self.server.list_tools()
-        tools = []
+        tools: list[ToolDefinition] = []
         for tool_data in raw_tools:
             # Build ToolUIMetadata from optional displayName / icon / displayDescription
             ui_meta = None
@@ -435,7 +446,7 @@ class MCPInProcessConnection(MCPConnection):
             tools.append(tool)
         return tools
 
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         """Call a tool on the in-process server."""
         return await self.server.call_tool(name, arguments)
 

@@ -10,6 +10,7 @@ import logging
 from typing import (
     Any,
     AsyncIterator,
+    Callable,
     Iterator,
     List,
     Union,
@@ -36,12 +37,12 @@ from openai.types.responses import (
     ResponseContentPartAddedEvent,
     ResponseContentPartDoneEvent,
 )
+from openai.types.responses import ResponseFunctionToolCall
 
 import json
 
-logger = logging.getLogger(__name__)
-
 from llming_models.llm_base_client import LlmClient
+from llming_models.llm_base_models import Role
 from llming_models.messages import (
     LlmAIMessage,
     LlmHumanMessage,
@@ -52,6 +53,8 @@ from llming_models.tools.tool_call import ToolCallInfo, ToolCallStatus
 from llming_models.tools.llm_toolbox import LlmToolbox
 from llming_models.tools.llm_tool import LlmTool
 from llming_models.providers.llm_provider_models import ReasoningEffort
+
+logger = logging.getLogger(__name__)
 
 
 def _convert_messages(
@@ -98,6 +101,7 @@ def _convert_messages(
         has_images = hasattr(m, 'images') and m.images and i in messages_with_images_indices
 
         if has_images:
+            assert m.images is not None  # guaranteed by has_images check
             # Multimodal format for Responses API
             # Use different content types based on role:
             # - User messages: input_text, input_image
@@ -179,15 +183,15 @@ class OpenAILlmClient(LlmClient):
         # Azure support
         if api_type == "azure":
             base_url = base_url or os.environ.get("AZURE_OPENAI_ENDPOINT")
-            self._client = AzureOpenAI(
+            self._client: OpenAI | AzureOpenAI = AzureOpenAI(
                 api_key=api_key,
                 api_version=api_version,
-                azure_endpoint=base_url,
+                azure_endpoint=base_url or "",
             )
-            self._aclient = AsyncAzureOpenAI(
+            self._aclient: AsyncOpenAI | AsyncAzureOpenAI = AsyncAzureOpenAI(
                 api_key=api_key,
                 api_version=api_version,
-                azure_endpoint=base_url,
+                azure_endpoint=base_url or "",
             )
         else:
             base_url = base_url or os.environ.get("OPENAI_API_BASE")
@@ -315,12 +319,12 @@ class OpenAILlmClient(LlmClient):
                     # Recursively enforce OpenAI strict-mode rules on the schema
                     params = self._enforce_strict_schema(dict(tool.parameters))
 
-                    tool_schema = {
+                    tool_schema: Dict[str, Any] = {
                         "type": "function",
                         "name": tool.name,
                         "description": tool.description,
                         "parameters": params,
-                        "strict": True
+                        "strict": True,
                     }
                     tools_list.append(tool_schema)
 
@@ -577,7 +581,7 @@ class OpenAILlmClient(LlmClient):
                     content = event_data.get('text') or event_data.get('value') or next((v for v in event_data.values() if isinstance(v, str)), '')
                     yield LlmMessageChunk(
                         content=content,          # the delta text
-                        role="assistant",
+                        role=Role.ASSISTANT,
                         index=next(chunk_index),
                         is_final=False,
                         response_metadata={},         # responses API includes usage later
@@ -600,7 +604,7 @@ class OpenAILlmClient(LlmClient):
                     # Yield pending state
                     yield LlmMessageChunk(
                         content="",
-                        role="assistant",
+                        role=Role.ASSISTANT,
                         index=next(chunk_index),
                         is_final=False,
                         response_metadata={},
@@ -623,13 +627,13 @@ class OpenAILlmClient(LlmClient):
                                     try:
                                         result = func(**args)
                                     except Exception as e:
-                                        logger.error(f"Tool execution error for {fn_name}: {e}")
-                                        error_msg = str(e)
+                                        logger.error("Tool execution error: %s", e, exc_info=True)
+                                        error_msg = "Tool execution failed"
 
                     # Yield completed state
                     yield LlmMessageChunk(
                         content="",
-                        role="assistant",
+                        role=Role.ASSISTANT,
                         index=next(chunk_index),
                         is_final=False,
                         response_metadata={},
@@ -646,7 +650,7 @@ class OpenAILlmClient(LlmClient):
                     # Mark the end of the stream
                     yield LlmMessageChunk(
                         content="",
-                        role="assistant",
+                        role=Role.ASSISTANT,
                         index=next(chunk_index),
                         is_final=True,
                         response_metadata={},
@@ -664,7 +668,7 @@ class OpenAILlmClient(LlmClient):
     async def astream(
         self,
         messages: list,
-        usage_callback: Optional[callable] = None,
+        usage_callback: Optional[Callable[..., Any]] = None,
     ) -> AsyncIterator[LlmMessageChunk]:
         """Stream responses with auto-continue after tool execution.
 
@@ -672,7 +676,6 @@ class OpenAILlmClient(LlmClient):
             messages: List of messages to send
             usage_callback: Optional callback(input_tokens, output_tokens) called after each API iteration
         """
-        from typing import Callable
         # Build tools array from toolboxes
         tools_list = self._build_tools_list()
         tool_func_map = self._build_tool_func_map()
@@ -719,7 +722,7 @@ class OpenAILlmClient(LlmClient):
                         if content:
                             yield LlmMessageChunk(
                                 content=content,
-                                role="assistant",
+                                role=Role.ASSISTANT,
                                 index=next(chunk_index),
                                 is_final=False,
                                 response_metadata={},
@@ -728,10 +731,11 @@ class OpenAILlmClient(LlmClient):
                     elif isinstance(event, ResponseOutputItemAddedEvent):
                         idx = event.output_index
                         tool_json_fragments[idx] = ""
-                        if hasattr(event, "item") and hasattr(event.item, "name"):
+                        item = event.item
+                        if isinstance(item, ResponseFunctionToolCall):
                             function_call_info[idx] = {
-                                "name": event.item.name,
-                                "call_id": event.item.call_id,
+                                "name": item.name,
+                                "call_id": item.call_id,
                             }
                     # Streaming JSON arguments
                     elif isinstance(event, ResponseFunctionCallArgumentsDeltaEvent):
@@ -746,7 +750,7 @@ class OpenAILlmClient(LlmClient):
                         # Yield a "pending" chunk with structured tool info
                         yield LlmMessageChunk(
                             content="",
-                            role="assistant",
+                            role=Role.ASSISTANT,
                             index=next(chunk_index),
                             is_final=False,
                             response_metadata={},
@@ -775,8 +779,8 @@ class OpenAILlmClient(LlmClient):
                                         None, functools.partial(func, **args)
                                     )
                                 except Exception as e:
-                                    logger.error(f"Tool execution error for {fn_name}: {e}")
-                                    error_msg = str(e)
+                                    logger.error("Tool execution error: %s", e, exc_info=True)
+                                    error_msg = "Tool execution failed"
 
                         # Track executed tool for conversation continuation
                         executed_tools.append({
@@ -790,7 +794,7 @@ class OpenAILlmClient(LlmClient):
                         # Yield the result with structured tool info
                         yield LlmMessageChunk(
                             content="",
-                            role="assistant",
+                            role=Role.ASSISTANT,
                             index=next(chunk_index),
                             is_final=False,
                             response_metadata={},
@@ -897,7 +901,7 @@ class OpenAILlmClient(LlmClient):
                         # Yield the image data as a special chunk for the caller to display
                         yield LlmMessageChunk(
                             content=result_to_send,  # Base64 image data
-                            role="assistant",
+                            role=Role.ASSISTANT,
                             index=next(chunk_index),
                             is_final=False,
                             tool_call=ToolCallInfo(
@@ -908,7 +912,7 @@ class OpenAILlmClient(LlmClient):
                             )
                         )
                         # Send a text summary to the model instead of the huge base64 data
-                        result_to_send = f"[Image generated successfully]"
+                        result_to_send = "[Image generated successfully]"
                         logger.debug(f"[OPENAI] Yielded image to caller, filtered from conversation (original: {len(tool['result'])} chars)")
 
                     # If result contains a __rich_mcp__ envelope, send only the summary to the LLM
@@ -935,7 +939,7 @@ class OpenAILlmClient(LlmClient):
         # Final chunk to mark stream end with total usage
         yield LlmMessageChunk(
             content="",
-            role="assistant",
+            role=Role.ASSISTANT,
             index=next(chunk_index),
             is_final=True,
             response_metadata={
@@ -965,7 +969,7 @@ class OpenAILlmClient(LlmClient):
         Returns:
             Base64-encoded image data
         """
-        kwargs = dict(model=model, prompt=prompt, size=size, quality=quality, n=n)
+        kwargs: Dict[str, Any] = dict(model=model, prompt=prompt, size=size, quality=quality, n=n)
         # DALL-E models need explicit response_format; gpt-image-1 always returns base64
         if model.startswith("dall-e"):
             kwargs["response_format"] = "b64_json"
@@ -993,7 +997,7 @@ class OpenAILlmClient(LlmClient):
         Returns:
             Base64-encoded image data
         """
-        kwargs = dict(model=model, prompt=prompt, size=size, quality=quality, n=n)
+        kwargs: Dict[str, Any] = dict(model=model, prompt=prompt, size=size, quality=quality, n=n)
         # DALL-E models need explicit response_format; gpt-image-1 always returns base64
         if model.startswith("dall-e"):
             kwargs["response_format"] = "b64_json"
@@ -1014,7 +1018,7 @@ if __name__ == "__main__":
                     dotenv.load_dotenv(start_dir+"/.env")
                     return
                 start_dir = os.path.dirname(start_dir)
-            except:
+            except Exception:
                 break
 
     find_env()

@@ -1,43 +1,41 @@
-# LLMing-Models
+<p align="center"><img src="https://raw.githubusercontent.com/Alyxion/llming-models/main/docs/logo-small.png" alt="LLMing Models" width="400"></p>
 
-Model metadata, configuration, and budget management for LLM applications.
+# llming-models
 
-LLMing-Models provides the foundational types for building multi-provider LLM applications. It defines model metadata (capabilities, pricing, context windows), configuration (model selection, filtering, defaults), and budget management (cost tracking, reservation, enforcement) — all with zero external dependencies.
+[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Alyxion/llming-models/blob/main/LICENSE)
+[![PyPI version](https://img.shields.io/pypi/v/llming-models.svg)](https://pypi.org/project/llming-models/)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-purple.svg)](https://github.com/astral-sh/ruff)
+
+**LLM execution engine -- multi-provider streaming, MCP tools, and budget management.**
+
+llming-models provides the core runtime for building multi-provider LLM applications. It handles model metadata and capabilities, streaming chat sessions with tool support, MCP (Model Context Protocol) integration, per-user configuration, and monetary budget tracking -- all behind a unified API that works across OpenAI, Anthropic, Google, Azure, Mistral, and Together/DeepSeek.
 
 ## Features
 
-### Model Metadata
+- **Model Metadata** -- Rich model descriptors with pricing, context windows, capability flags (vision, reasoning), and UI hints (speed/quality ratings)
+- **Configuration** -- Global and per-user model selection with category mappings, provider cascade priority, and include/exclude filters
+- **Budget Management** -- Track and enforce monetary limits per time period with reservation/rollback semantics and pluggable backends (memory, MongoDB)
+- **Multi-Provider Streaming** -- Unified async/sync streaming across OpenAI, Anthropic, Google Gemini, Azure OpenAI, Azure Anthropic, Mistral, and Together AI
+- **MCP Tools** -- First-class Model Context Protocol support with tool registries, toolbox adapters, and built-in MCP servers (math, image generation)
+- **Chat Sessions** -- High-level `ChatSession` with automatic tool dispatch, conversation history, image support, and reasoning effort control
+- **Conversation Persistence** -- IndexedDB-compatible conversation storage with metadata, avatars, and file references
 
-Describe LLM models with rich, structured metadata.
+## Chat Playground
 
-- **`LLMInfo`**: Dataclass capturing everything about a model — provider, pricing (input/output/cached per 1M tokens), context window sizes, capability flags (vision, reasoning), UI metadata (speed/quality ratings, highlights), and tool configuration.
-- **`ModelSize`**: Size categories (`VERY_SMALL` through `VERY_LARGE`) for grouping models.
-- **`ReasoningEffort`**: Effort levels (`NONE`, `MINIMAL`, `LOW`, `MEDIUM`, `HIGH`) for models with configurable thinking depth.
+<p align="center"><img src="https://raw.githubusercontent.com/Alyxion/llming-models/main/docs/sample_screenshot_small.png" alt="llming playground" width="800"></p>
 
-### Configuration
+Interactive chat UI with model selection, streaming responses, TTS/STT (OpenAI + ElevenLabs), push-to-talk, word-level highlighting, and token cost tracking. Run it with:
 
-Flexible model selection and filtering at global and user levels.
+```bash
+cp .env.template .env   # fill in API keys
+python samples/chat_app.py
+# Open http://localhost:8000
+```
 
-- **`LLMGlobalConfig`**: System-wide defaults — model category mappings (small/medium/large/reasoning), provider cascade priority, include/exclude filters via fnmatch globs.
-- **`LLMUserConfig`**: Per-user overrides — inherits from global config, user can pin specific models per category. Supports prompt parameters.
-- **`ModelCategories`**: Standard category constants (`SMALL`, `MEDIUM`, `LARGE`, `REASONING_SMALL`, `REASONING_MEDIUM`, `REASONING_LARGE`).
+## Quick Start
 
-### Budget Management
-
-Track and enforce monetary limits on LLM usage.
-
-- **`BudgetLimit`** (abstract): Base class for budget backends. Supports named limits with configurable time periods and timezone-aware key generation.
-- **`MemoryBudgetLimit`**: Thread-safe in-memory implementation with per-period tracking. Suitable for single-process applications and testing.
-- **`LLMBudgetManager`**: Coordinates multiple budget limits — checks all limits before reserving, rolls back on failure, returns unused budget after operations complete. Calculates costs from per-million-token pricing.
-- **`TimeInterval`**: Period types (`TOTAL`, `YEARLY`, `MONTHLY`, `DAILY`, `HOURLY`, `MINUTES`, `SECONDS`) with bucketed key generation and expiry calculation.
-- **`TokenUsage`**: Token count + cost tracking for completed operations.
-- **`InsufficientBudgetError`**: Raised when an operation exceeds available budget.
-
-### Zero Dependencies
-
-The entire package uses only Python stdlib — no `pydantic`, no `tiktoken`, no provider SDKs. This means downstream applications can query model metadata and manage budgets without pulling in heavy ML dependencies.
-
-## Installation
+### Installation
 
 ```bash
 pip install llming-models
@@ -51,9 +49,7 @@ cd llming-models
 poetry install
 ```
 
-## Quick Start
-
-### Model Metadata
+### Basic Usage
 
 ```python
 from llming_models import LLMInfo, ModelSize, ReasoningEffort
@@ -100,7 +96,6 @@ user_config = LLMUserConfig(
 )
 
 print(user_config.get_default_model(ModelCategories.LARGE))  # "claude_sonnet"
-print(user_config.is_model_supported("anthropic:claude_sonnet"))  # True
 ```
 
 ### Budget Management
@@ -117,7 +112,7 @@ async def main():
     manager = LLMBudgetManager(limits)
 
     available = await manager.available_budget_async()
-    print(f"Available: {available:.2f}€")
+    print(f"Available: {available:.2f}")
 
     await manager.reserve_budget_async(
         input_tokens=1000,
@@ -126,39 +121,32 @@ async def main():
         output_token_price=15.0,  # per 1M tokens
     )
 
-    await manager.return_unused_budget_async(
-        reserved_output_tokens=2000,
-        actual_output_tokens=500,
-        output_token_price=15.0,
-    )
-
 asyncio.run(main())
 ```
 
-## Architecture
+## Project Structure
 
 ```
-llming_models/
-├── __init__.py              # Public API exports
-├── model_info.py            # LLMInfo, ModelSize, ReasoningEffort
-├── model_categories.py      # ModelCategories constants
-├── config.py                # LLMBaseConfig, LLMGlobalConfig, LLMUserConfig
-└── budget/
-    ├── __init__.py           # Budget subpackage exports
-    ├── budget_types.py       # TokenUsage, InsufficientBudgetError, LimitPeriod
-    ├── time_intervals.py     # TimeInterval, TimeIntervalHandler
-    ├── budget_limit.py       # BudgetLimit (abstract base)
-    ├── budget_manager.py     # LLMBudgetManager (multi-limit coordinator)
-    └── memory_budget_limit.py # MemoryBudgetLimit (in-memory implementation)
+llming-models/
+├── llming_models/          # Models, config, sessions, budget, providers, tools
+│   ├── budget/             # Cost tracking with time-period limits (memory + MongoDB)
+│   ├── providers/          # OpenAI, Anthropic, Google, Azure, Mistral, Together
+│   ├── tools/              # Tool system, MCP integration, math server, image gen
+│   └── utils/              # Image encoding utilities
+├── tests/                  # 1255 tests (unit + integration with live APIs)
+├── samples/                # Example scripts
+└── docs/                   # Logo and assets
 ```
 
-## Running Tests
+## Development
 
 ```bash
 poetry install
-poetry run pytest
+poetry run pytest             # 1255 tests
+poetry run ruff check         # lint
+poetry run mypy llming_models # type check
 ```
 
 ## License
 
-**LLMing-Models** is licensed under the **MIT License**. See [LICENSE](LICENSE) for details.
+This project is licensed under the [MIT License](https://github.com/Alyxion/llming-models/blob/main/LICENSE). Copyright (c) 2026 [Michael Ikemann](https://github.com/Alyxion).

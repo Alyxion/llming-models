@@ -1,5 +1,4 @@
 """Mistral model configurations."""
-from typing import List
 
 from ..llm_provider_models import LLMInfo, ModelSize
 

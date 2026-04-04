@@ -1,4 +1,7 @@
-from typing import Callable, Any, Dict, Optional
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
 
 class LlmTool:
     def __init__(
@@ -6,8 +9,8 @@ class LlmTool:
         name: str,
         description: str,
         func: Callable[..., Any],
-        parameters: Optional[Dict[str, Any]] = None,
-    ):
+        parameters: dict[str, Any] | None = None,
+    ) -> None:
         self.name = name
         self.description = description
         self.func = func

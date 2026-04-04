@@ -1,7 +1,8 @@
 """Time interval utilities for budget management."""
+from __future__ import annotations
+
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Optional, Union
 
 
 class TimeInterval(Enum):
@@ -19,7 +20,7 @@ class TimeIntervalHandler:
     """Handles time interval operations for budget periods."""
 
     @staticmethod
-    def get_key_suffix(interval: TimeInterval, time: datetime, interval_value: Optional[Union[int, str]] = None) -> str:
+    def get_key_suffix(interval: TimeInterval, time: datetime, interval_value: int | str | None = None) -> str:
         """Generate key suffix based on interval.
 
         Args:
@@ -80,7 +81,7 @@ class TimeIntervalHandler:
             raise ValueError(f"Unsupported interval: {interval}")
 
     @staticmethod
-    def get_expiry(interval: TimeInterval, interval_value: Optional[Union[int, str]] = None) -> Optional[timedelta]:
+    def get_expiry(interval: TimeInterval, interval_value: int | str | None = None) -> timedelta | None:
         """Get expiry duration based on interval.
 
         Args:
@@ -88,7 +89,7 @@ class TimeIntervalHandler:
             interval_value: Optional value for intervals
 
         Returns:
-            Optional[timedelta]: The expiry duration, or None for TOTAL interval
+            The expiry duration, or None for TOTAL interval
 
         Raises:
             ValueError: If interval is not supported

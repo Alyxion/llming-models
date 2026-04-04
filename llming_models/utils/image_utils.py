@@ -6,6 +6,7 @@ This module provides shared image handling utilities used by LLM provider client
 Key functions:
 - is_likely_image_data: Detect if a string contains base64 image data
 """
+from __future__ import annotations
 
 import logging
 

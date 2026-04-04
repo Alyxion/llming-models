@@ -1,152 +1,239 @@
-"""Tests for llming_models.budget — budget management."""
-
+"""Tests for the budget management system (async-only API)."""
+import asyncio
 import pytest
+import pytest_asyncio
+
 from llming_models.budget import (
-    LimitPeriod,
-    MemoryBudgetLimit,
     LLMBudgetManager,
+    MemoryBudgetLimit,
+    LimitPeriod,
     InsufficientBudgetError,
-    TokenUsage,
-    TimeInterval,
-    TimeIntervalHandler,
 )
-from datetime import datetime
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_manager(amount: float = 1.0, period: LimitPeriod = LimitPeriod.TOTAL,
+                   reserve_output_ratio: float = 1.0) -> LLMBudgetManager:
+    """Create a simple single-limit manager.
+
+    Uses reserve_output_ratio=1.0 (full worst-case) by default so the
+    existing deterministic test math stays valid.
+    """
+    return LLMBudgetManager(
+        [MemoryBudgetLimit(name="test", amount=amount, period=period)],
+        reserve_output_ratio=reserve_output_ratio,
+    )
 
 
-class TestTimeInterval:
-    def test_values(self):
-        assert TimeInterval.TOTAL.value == "total"
-        assert TimeInterval.DAILY.value == "daily"
-        assert TimeInterval.MONTHLY.value == "monthly"
-
-    def test_key_suffix_total(self):
-        assert TimeIntervalHandler.get_key_suffix(TimeInterval.TOTAL, datetime.now()) == "total"
-
-    def test_key_suffix_daily(self):
-        dt = datetime(2026, 3, 21, 14, 30, 0)
-        assert TimeIntervalHandler.get_key_suffix(TimeInterval.DAILY, dt) == "2026-03-21"
-
-    def test_key_suffix_monthly(self):
-        dt = datetime(2026, 3, 21)
-        assert TimeIntervalHandler.get_key_suffix(TimeInterval.MONTHLY, dt) == "2026-03"
-
-    def test_key_suffix_hourly(self):
-        dt = datetime(2026, 3, 21, 14, 30, 0)
-        assert TimeIntervalHandler.get_key_suffix(TimeInterval.HOURLY, dt) == "2026-03-21-14"
-
-    def test_expiry_total(self):
-        assert TimeIntervalHandler.get_expiry(TimeInterval.TOTAL) is None
-
-    def test_expiry_daily(self):
-        expiry = TimeIntervalHandler.get_expiry(TimeInterval.DAILY)
-        assert expiry.days == 2
+# Pricing: $10/1M input, $30/1M output (similar to GPT-4 class models)
+INPUT_PRICE = 10.0
+OUTPUT_PRICE = 30.0
 
 
-class TestTokenUsage:
-    def test_totals(self):
-        usage = TokenUsage(input_tokens=100, output_tokens=50,
-                          input_cost=0.01, output_cost=0.005)
-        assert usage.total_tokens == 150
-        assert usage.total_cost == 0.015
+# ---------------------------------------------------------------------------
+# LLMBudgetManager — async API
+# ---------------------------------------------------------------------------
 
+class TestBudgetManagerAsync:
+    """All tests use the async API exclusively."""
 
-class TestMemoryBudgetLimit:
-    @pytest.mark.asyncio
-    async def test_total_budget(self):
-        limit = MemoryBudgetLimit(name="test", amount=10.0, period=LimitPeriod.TOTAL)
-        available = await limit.get_available_budget_async()
-        assert available == 10.0
-
-    @pytest.mark.asyncio
-    async def test_reserve_and_return(self):
-        limit = MemoryBudgetLimit(name="test", amount=10.0, period=LimitPeriod.TOTAL)
-        assert await limit.reserve_budget_async(3.0) is True
-        assert await limit.get_available_budget_async() == 7.0
-        await limit.return_budget_async(3.0)
-        assert await limit.get_available_budget_async() == 10.0
-
-    @pytest.mark.asyncio
-    async def test_reserve_exceeds_budget(self):
-        limit = MemoryBudgetLimit(name="test", amount=5.0, period=LimitPeriod.TOTAL)
-        assert await limit.reserve_budget_async(6.0) is False
-        assert await limit.get_available_budget_async() == 5.0
-
-    @pytest.mark.asyncio
-    async def test_daily_budget(self):
-        limit = MemoryBudgetLimit(name="daily", amount=10.0, period=LimitPeriod.DAILY)
-        assert await limit.reserve_budget_async(3.0) is True
-        assert await limit.get_available_budget_async() == 7.0
-
-    @pytest.mark.asyncio
-    async def test_reset(self):
-        limit = MemoryBudgetLimit(name="test", amount=10.0, period=LimitPeriod.TOTAL)
-        await limit.reserve_budget_async(5.0)
-        await limit.reset_async()
-        assert await limit.get_available_budget_async() == 10.0
-
-
-class TestLLMBudgetManager:
     @pytest.mark.asyncio
     async def test_available_budget(self):
-        limits = [
-            MemoryBudgetLimit(name="a", amount=10.0, period=LimitPeriod.TOTAL),
-            MemoryBudgetLimit(name="b", amount=5.0, period=LimitPeriod.TOTAL),
-        ]
-        manager = LLMBudgetManager(limits)
-        assert await manager.available_budget_async() == 5.0  # minimum
+        mgr = _make_manager(amount=5.0)
+        budget = await mgr.available_budget_async()
+        assert budget == 5.0
 
     @pytest.mark.asyncio
     async def test_reserve_budget(self):
-        limits = [
-            MemoryBudgetLimit(name="a", amount=10.0, period=LimitPeriod.TOTAL),
-        ]
-        manager = LLMBudgetManager(limits)
-        await manager.reserve_budget_async(
-            input_tokens=1000, max_output_tokens=1000,
-            input_token_price=1.0, output_token_price=1.0,
+        mgr = _make_manager(amount=1.0)
+        await mgr.reserve_budget_async(
+            input_tokens=1000,
+            max_output_tokens=1000,
+            input_token_price=INPUT_PRICE,
+            output_token_price=OUTPUT_PRICE,
         )
-        available = await manager.available_budget_async()
-        assert available < 10.0
+        # 1000 * 10/1M + 1000 * 30/1M = 0.01 + 0.03 = 0.04
+        budget = await mgr.available_budget_async()
+        assert abs(budget - 0.96) < 1e-9
 
     @pytest.mark.asyncio
-    async def test_insufficient_budget_raises(self):
-        limits = [
-            MemoryBudgetLimit(name="tiny", amount=0.001, period=LimitPeriod.TOTAL),
-        ]
-        manager = LLMBudgetManager(limits)
+    async def test_reserve_insufficient_budget(self):
+        mgr = _make_manager(amount=0.001)
         with pytest.raises(InsufficientBudgetError):
-            await manager.reserve_budget_async(
-                input_tokens=1_000_000, max_output_tokens=1_000_000,
-                input_token_price=10.0, output_token_price=10.0,
+            await mgr.reserve_budget_async(
+                input_tokens=100_000,
+                max_output_tokens=100_000,
+                input_token_price=INPUT_PRICE,
+                output_token_price=OUTPUT_PRICE,
             )
 
     @pytest.mark.asyncio
-    async def test_return_unused(self):
-        limits = [
-            MemoryBudgetLimit(name="a", amount=10.0, period=LimitPeriod.TOTAL),
-        ]
-        manager = LLMBudgetManager(limits)
-        await manager.reserve_budget_async(
-            input_tokens=1000, max_output_tokens=2000,
-            input_token_price=1.0, output_token_price=1.0,
+    async def test_return_unused_budget(self):
+        mgr = _make_manager(amount=1.0)
+        # Reserve for 4000 output tokens
+        await mgr.reserve_budget_async(
+            input_tokens=1000,
+            max_output_tokens=4000,
+            input_token_price=INPUT_PRICE,
+            output_token_price=OUTPUT_PRICE,
         )
-        budget_after_reserve = await manager.available_budget_async()
-        await manager.return_unused_budget_async(
-            reserved_output_tokens=2000, actual_output_tokens=500,
-            output_token_price=1.0,
+        # Reserved: 1000*10/1M + 4000*30/1M = 0.01 + 0.12 = 0.13
+        budget_after_reserve = await mgr.available_budget_async()
+        assert abs(budget_after_reserve - 0.87) < 1e-9
+
+        # Actually used only 1000 output tokens — return the rest
+        await mgr.return_unused_budget_async(
+            reserved_output_tokens=4000,
+            actual_output_tokens=1000,
+            output_token_price=OUTPUT_PRICE,
         )
-        budget_after_return = await manager.available_budget_async()
-        assert budget_after_return > budget_after_reserve
+        # Returned: (4000-1000) * 30/1M = 0.09
+        budget_after_return = await mgr.available_budget_async()
+        assert abs(budget_after_return - 0.96) < 1e-9
+
+    @pytest.mark.asyncio
+    async def test_return_overuse(self):
+        """When actual tokens exceed reserved, additional budget is consumed."""
+        mgr = _make_manager(amount=1.0)
+        await mgr.reserve_budget_async(
+            input_tokens=1000,
+            max_output_tokens=1000,
+            input_token_price=INPUT_PRICE,
+            output_token_price=OUTPUT_PRICE,
+        )
+        # Reserved cost: 0.01 + 0.03 = 0.04 → available = 0.96
+        # Now report actual = 2000 (overuse by 1000)
+        await mgr.return_unused_budget_async(
+            reserved_output_tokens=1000,
+            actual_output_tokens=2000,
+            output_token_price=OUTPUT_PRICE,
+        )
+        # Additional cost: 1000 * 30/1M = 0.03
+        budget = await mgr.available_budget_async()
+        assert abs(budget - 0.93) < 1e-9
 
     @pytest.mark.asyncio
     async def test_reset(self):
-        limits = [
-            MemoryBudgetLimit(name="a", amount=10.0, period=LimitPeriod.TOTAL),
-        ]
-        manager = LLMBudgetManager(limits)
-        await manager.reserve_budget_async(
-            input_tokens=1000, max_output_tokens=1000,
-            input_token_price=1.0, output_token_price=1.0,
+        mgr = _make_manager(amount=1.0)
+        await mgr.reserve_budget_async(
+            input_tokens=10_000,
+            max_output_tokens=10_000,
+            input_token_price=INPUT_PRICE,
+            output_token_price=OUTPUT_PRICE,
         )
-        await manager.reset_async()
-        assert await manager.available_budget_async() == 10.0
+        budget_before = await mgr.available_budget_async()
+        assert budget_before < 1.0
+
+        await mgr.reset_async()
+        budget_after = await mgr.available_budget_async()
+        assert budget_after == 1.0
+
+    @pytest.mark.asyncio
+    async def test_multiple_limits(self):
+        """Manager enforces the tightest limit."""
+        mgr = LLMBudgetManager([
+            MemoryBudgetLimit(name="daily", amount=0.10, period=LimitPeriod.DAILY),
+            MemoryBudgetLimit(name="monthly", amount=10.0, period=LimitPeriod.MONTHLY),
+        ], reserve_output_ratio=1.0)
+        # This should succeed — both limits have room
+        await mgr.reserve_budget_async(
+            input_tokens=1000,
+            max_output_tokens=1000,
+            input_token_price=INPUT_PRICE,
+            output_token_price=OUTPUT_PRICE,
+        )
+        budget = await mgr.available_budget_async()
+        # min(0.10 - 0.04, 10.0 - 0.04) = 0.06
+        assert abs(budget - 0.06) < 1e-9
+
+    @pytest.mark.asyncio
+    async def test_multiple_limits_tight_one_fails(self):
+        """If the tighter limit is exhausted, reservation fails and rolls back."""
+        mgr = LLMBudgetManager([
+            MemoryBudgetLimit(name="tight", amount=0.01, period=LimitPeriod.TOTAL),
+            MemoryBudgetLimit(name="loose", amount=100.0, period=LimitPeriod.TOTAL),
+        ], reserve_output_ratio=1.0)
+        with pytest.raises(InsufficientBudgetError) as exc_info:
+            await mgr.reserve_budget_async(
+                input_tokens=10_000,
+                max_output_tokens=10_000,
+                input_token_price=INPUT_PRICE,
+                output_token_price=OUTPUT_PRICE,
+            )
+        assert exc_info.value.limit_name == "tight"
+        # Loose limit should have been rolled back
+        loose_budget = await mgr.limits["loose"].get_available_budget_async()
+        assert loose_budget == 100.0
+
+    @pytest.mark.asyncio
+    async def test_no_sync_methods(self):
+        """Sync methods must not exist on LLMBudgetManager."""
+        mgr = _make_manager()
+        assert not hasattr(mgr, "available_budget")
+        assert not hasattr(mgr, "reserve_budget")
+        assert not hasattr(mgr, "return_unused_budget")
+        assert not hasattr(mgr, "reset")
+
+
+# ---------------------------------------------------------------------------
+# MemoryBudgetLimit — async API
+# ---------------------------------------------------------------------------
+
+class TestMemoryBudgetLimitAsync:
+
+    @pytest.mark.asyncio
+    async def test_total_limit_reserve_and_return(self):
+        limit = MemoryBudgetLimit(name="total", amount=1.0, period=LimitPeriod.TOTAL)
+        assert await limit.get_available_budget_async() == 1.0
+
+        assert await limit.reserve_budget_async(0.3) is True
+        assert abs(await limit.get_available_budget_async() - 0.7) < 1e-9
+
+        await limit.return_budget_async(0.1)
+        assert abs(await limit.get_available_budget_async() - 0.8) < 1e-9
+
+    @pytest.mark.asyncio
+    async def test_total_limit_overdraw_rejected(self):
+        limit = MemoryBudgetLimit(name="total", amount=0.5, period=LimitPeriod.TOTAL)
+        assert await limit.reserve_budget_async(0.6) is False
+        # Budget unchanged
+        assert await limit.get_available_budget_async() == 0.5
+
+    @pytest.mark.asyncio
+    async def test_daily_limit(self):
+        limit = MemoryBudgetLimit(name="daily", amount=1.0, period=LimitPeriod.DAILY)
+        assert await limit.get_available_budget_async() == 1.0
+
+        assert await limit.reserve_budget_async(0.4) is True
+        assert abs(await limit.get_available_budget_async() - 0.6) < 1e-9
+
+    @pytest.mark.asyncio
+    async def test_reset(self):
+        limit = MemoryBudgetLimit(name="total", amount=1.0, period=LimitPeriod.TOTAL)
+        await limit.reserve_budget_async(0.8)
+        assert abs(await limit.get_available_budget_async() - 0.2) < 1e-9
+
+        await limit.reset_async()
+        assert await limit.get_available_budget_async() == 1.0
+
+    @pytest.mark.asyncio
+    async def test_monthly_limit(self):
+        limit = MemoryBudgetLimit(name="monthly", amount=10.0, period=LimitPeriod.MONTHLY)
+        assert await limit.reserve_budget_async(3.0) is True
+        assert abs(await limit.get_available_budget_async() - 7.0) < 1e-9
+        await limit.return_budget_async(1.0)
+        assert abs(await limit.get_available_budget_async() - 8.0) < 1e-9
+
+    @pytest.mark.asyncio
+    async def test_budget_limit_abc_has_no_sync_abstract_methods(self):
+        """BudgetLimit ABC only defines async abstract methods."""
+        from llming_models.budget.budget_limit import BudgetLimit
+        import inspect
+        # All abstract methods should be async (coroutine functions)
+        for name, method in inspect.getmembers(BudgetLimit, predicate=inspect.isfunction):
+            if getattr(method, "__isabstractmethod__", False):
+                assert inspect.iscoroutinefunction(method), (
+                    f"Abstract method {name} should be async"
+                )

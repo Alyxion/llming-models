@@ -8,6 +8,7 @@ import logging
 from typing import (
     Any,
     AsyncIterator,
+    Callable,
     Iterator,
     List,
     Union,
@@ -126,7 +127,7 @@ class GoogleClient(LlmClient):
 
         response = self._client.models.generate_content(
             model=self.model,
-            contents=contents,
+            contents=contents,  # type: ignore[arg-type]
             config=types.GenerateContentConfig(
                 temperature=config.temperature,
                 max_output_tokens=config.max_output_tokens,
@@ -135,11 +136,11 @@ class GoogleClient(LlmClient):
         )
 
         text = ""
-        images = []
+        images: List[str] = []
         if response.candidates and response.candidates[0].content:
             text, images = _extract_text_and_images(response.candidates[0].content.parts)
 
-        metadata = {}
+        metadata: Dict[str, Any] = {}
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             metadata = {
                 "input_tokens": getattr(response.usage_metadata, "prompt_token_count", 0),
@@ -159,7 +160,7 @@ class GoogleClient(LlmClient):
 
         response = await self._client.aio.models.generate_content(
             model=self.model,
-            contents=contents,
+            contents=contents,  # type: ignore[arg-type]
             config=types.GenerateContentConfig(
                 temperature=config.temperature,
                 max_output_tokens=config.max_output_tokens,
@@ -168,11 +169,11 @@ class GoogleClient(LlmClient):
         )
 
         text = ""
-        images = []
+        images: List[str] = []
         if response.candidates and response.candidates[0].content:
             text, images = _extract_text_and_images(response.candidates[0].content.parts)
 
-        metadata = {}
+        metadata: Dict[str, Any] = {}
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             metadata = {
                 "input_tokens": getattr(response.usage_metadata, "prompt_token_count", 0),
@@ -193,7 +194,7 @@ class GoogleClient(LlmClient):
 
         for chunk in self._client.models.generate_content_stream(
             model=self.model,
-            contents=contents,
+            contents=contents,  # type: ignore[arg-type]
             config=types.GenerateContentConfig(
                 temperature=config.temperature,
                 max_output_tokens=config.max_output_tokens,
@@ -224,21 +225,29 @@ class GoogleClient(LlmClient):
     async def astream(
         self,
         messages: List[Union[LlmSystemMessage, LlmHumanMessage, LlmAIMessage]],
-        usage_callback: Optional[callable] = None,
+        usage_callback: Optional[Callable[..., Any]] = None,
     ) -> AsyncIterator[LlmMessageChunk]:
         system_instruction, contents = _build_contents(messages)
         config = self._build_config()
         chunk_index = itertools.count()
 
+        total_input_tokens = 0
+        total_output_tokens = 0
+
         async for chunk in await self._client.aio.models.generate_content_stream(
             model=self.model,
-            contents=contents,
+            contents=contents,  # type: ignore[arg-type]
             config=types.GenerateContentConfig(
                 temperature=config.temperature,
                 max_output_tokens=config.max_output_tokens,
                 system_instruction=system_instruction,
             ),
         ):
+            # Capture usage_metadata from whichever chunk carries it (typically the last)
+            if chunk.usage_metadata:
+                total_input_tokens = chunk.usage_metadata.prompt_token_count or 0
+                total_output_tokens = chunk.usage_metadata.candidates_token_count or 0
+
             if chunk.candidates and chunk.candidates[0].content:
                 text, images = _extract_text_and_images(chunk.candidates[0].content.parts)
                 if text or images:
@@ -251,12 +260,19 @@ class GoogleClient(LlmClient):
                         images=images if images else None,
                     )
 
-        # Note: google-genai doesn't provide per-chunk usage in streaming,
-        # usage_callback is not called here
+        if usage_callback and (total_input_tokens or total_output_tokens):
+            try:
+                usage_callback(total_input_tokens, total_output_tokens)
+            except Exception as e:
+                logger.warning(f"Usage callback error: {e}")
+
         yield LlmMessageChunk(
             content="",
             role=Role.ASSISTANT,
             index=next(chunk_index),
             is_final=True,
-            response_metadata={},
+            response_metadata={
+                "total_input_tokens": total_input_tokens,
+                "total_output_tokens": total_output_tokens,
+            },
         )

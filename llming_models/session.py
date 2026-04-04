@@ -1,7 +1,10 @@
 """Chat session handling with LLM providers."""
+from __future__ import annotations
+
 import logging
 import os
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from collections.abc import AsyncIterator, Callable
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
@@ -9,8 +12,13 @@ from .messages import LlmAIMessage, LlmHumanMessage, LlmSystemMessage, LlmMessag
 from .tools.tool_definition import MCPServerConfig
 from .llm_base_models import ChatHistory, ChatMessage, Role
 from .providers import get_provider
+from .providers.llm_provider_base import BaseProvider
 from .providers.llm_provider_models import ReasoningEffort
 from .budget import LLMBudgetManager, InsufficientBudgetError
+
+if TYPE_CHECKING:
+    from .credentials import ProviderCredentials
+    from .llm_base_client import LlmClient
 
 logger = logging.getLogger(__name__)
 
@@ -19,27 +27,27 @@ class LLMConfig(BaseModel):
     """Configuration for LLM providers."""
     provider: str = Field(..., description="Provider name (openai, anthropic, mistral, google, together, or custom)")
     model: str = Field(..., description="Model name to use")
-    base_url: Optional[str] = None
+    base_url: str | None = None
     temperature: float = Field(0.7, description="Temperature for responses")
-    max_tokens: Optional[int] = 4096
-    max_input_tokens: Optional[int] = 64000
-    reasoning_effort: Optional[ReasoningEffort] = Field(None, description="Reasoning effort level (None = use model default)")
+    max_tokens: int | None = 4096
+    max_input_tokens: int | None = 64000
+    reasoning_effort: ReasoningEffort | None = Field(default=None, description="Reasoning effort level (None = use model default)")
 
     max_history_images: int = Field(20, description="Maximum number of images kept active in history. Oldest are flagged stale.")
     condense_threshold_pct: float = Field(0.80, description="Trigger conversation condensation when context usage exceeds this fraction of max_input_tokens")
-    condense_model: Optional[str] = Field(None, description="Model to use for condensation. If None, uses the cheapest available model from the same provider. Use a small/fast model to save cost and time.")
+    condense_model: str | None = Field(default=None, description="Model to use for condensation. If None, uses the cheapest available model from the same provider. Use a small/fast model to save cost and time.")
     condense_max_tokens: int = Field(5000, description="Hard cap on condensation summary output tokens. Prevents runaway costs on large contexts.")
 
     # Tool configuration
-    tools: Optional[List[str]] = Field(None, description="List of tool names to enable. None = use model defaults.")
-    tool_config: Optional[Dict[str, Any]] = Field(
-        None,
+    tools: list[str] | None = Field(default=None, description="List of tool names to enable. None = use model defaults.")
+    tool_config: dict[str, Any] | None = Field(
+        default=None,
         description="Per-tool configuration. Keys are tool names, values are tool-specific settings. "
                     "Example: {'generate_image': {'size': '1024x1024', 'quality': 'standard'}, "
                     "'web_search': {'max_results': 5}}"
     )
-    mcp_servers: Optional[List[MCPServerConfig]] = Field(
-        None,
+    mcp_servers: list[MCPServerConfig] | None = Field(
+        default=None,
         description="List of MCP server configurations. Tools from these servers will be discovered "
                     "and made available. Example: [MCPServerConfig(command='python', args=['-m', 'my_mcp_server'])]"
     )
@@ -51,31 +59,36 @@ class ChatSession:
     def __init__(
         self,
         config: LLMConfig,
-        system_prompt: Optional[str] = None,
-        budget_manager: Optional[LLMBudgetManager] = None,
-        user_id: Optional[str] = None
+        system_prompt: str | None = None,
+        budget_manager: LLMBudgetManager | None = None,
+        user_id: str | None = None,
+        credentials: ProviderCredentials | None = None,
     ):
         """Initialize chat session.
-        
+
         Args:
             config: LLM configuration
             system_prompt: Optional system prompt to set context
             budget_manager: Optional budget manager for tracking costs
             user_id: Optional user ID for logging usage
+            credentials: Optional explicit credentials for the provider.
+                When omitted, the provider falls back to environment variables.
         """
         self.config = config
         self.history = ChatHistory()
         self.budget_manager = budget_manager
         self._system_prompt = system_prompt
-        self._context_preamble: Optional[str] = None  # silently prepended to system prompt at API call time
-        self._system_prompt_suffix: Optional[str] = None  # appended AFTER system prompt (e.g., auto-discover catalog)
-        self._client = None
-        self._last_client_config = None
+        self._context_preamble: str | None = None  # silently prepended to system prompt at API call time
+        self._system_prompt_suffix: str | None = None  # appended AFTER system prompt (e.g., auto-discover catalog)
+        self._client: LlmClient | None = None
+        self._last_client_config: tuple[frozenset[tuple[str, Any]], tuple[Any, ...] | None, tuple[Any, ...] | None, tuple[Any, ...] | None] | None = None
         self.user_id = user_id
-        
+
         # Get provider implementation
+        # get_provider() returns Type[BaseProvider] but concrete subclasses
+        # hardcode name/label and only accept credentials.
         provider_class = get_provider(config.provider)
-        self._provider = provider_class()
+        self._provider: BaseProvider = provider_class(credentials=credentials)  # type: ignore[call-arg]
         
         # Get model info
         model_info = next(
@@ -88,21 +101,21 @@ class ChatSession:
         self.model_info = model_info
 
         # Conversation condensation
-        self._condensed_summary: Optional[str] = None
+        self._condensed_summary: str | None = None
         self._is_condensing: bool = False
-        self.on_condense_start: Optional[Any] = None   # Callable[[], None]
-        self.on_condense_end: Optional[Any] = None     # Callable[[], None]
-        self.on_condense_progress: Optional[Any] = None  # Callable[[float], None] — 0.0 to 1.0
+        self.on_condense_start: Callable[[], None] | None = None
+        self.on_condense_end: Callable[[], None] | None = None
+        self.on_condense_progress: Callable[[float], None] | None = None  # 0.0 to 1.0
 
         # MCP connections (lazily initialized)
-        self._mcp_connections: Dict[str, Any] = {}
+        self._mcp_connections: dict[str, Any] = {}
         self._mcp_tools_discovered = False
         # Tracks tool grouping per MCP server: server_id -> {label, description, category, exclude_providers, tool_names}
-        self._mcp_server_groups: Dict[str, Dict[str, Any]] = {}
+        self._mcp_server_groups: dict[str, dict[str, Any]] = {}
         # Prompt hints collected from in-process MCP servers
-        self._mcp_prompt_hints: List[str] = []
+        self._mcp_prompt_hints: list[str] = []
         # Client-side renderers from in-process MCP servers
-        self._mcp_client_renderers: List[Dict[str, str]] = []
+        self._mcp_client_renderers: list[dict[str, str]] = []
 
     def invalidate_client(self) -> None:
         """Invalidate the client and force a new client creation."""
@@ -123,7 +136,7 @@ class ChatSession:
             return
 
         import asyncio
-        from .tools.mcp import create_connection, MCPError
+        from .tools.mcp import create_connection
         from .tools.tool_registry import get_default_registry
 
         registry = get_default_registry()
@@ -132,34 +145,20 @@ class ChatSession:
         registry.set_event_loop(asyncio.get_running_loop())
 
         # Parse server configs upfront
-        server_metas = []
+        server_metas: list[dict[str, Any]] = []
         for idx, server_config in enumerate(self.config.mcp_servers):
-            if hasattr(server_config, 'command'):
-                server_id = server_config.command or server_config.url or server_config.label
-                meta = dict(
-                    enabled=getattr(server_config, 'enabled_by_default', False),
-                    category=getattr(server_config, 'category', None),
-                    exclude=getattr(server_config, 'exclude_providers', None),
-                    requires=getattr(server_config, 'requires_providers', None),
-                    label=getattr(server_config, 'label', None),
-                    description=getattr(server_config, 'description', None),
-                    default_tools=getattr(server_config, 'default_enabled_tools', None),
-                    collapse_tools=getattr(server_config, 'collapse_tools', False),
-                    flyout=getattr(server_config, 'flyout', False),
-                )
-            else:
-                server_id = server_config.get('command') or server_config.get('url') or server_config.get('label')
-                meta = dict(
-                    enabled=server_config.get('enabled_by_default', False),
-                    category=server_config.get('category'),
-                    exclude=server_config.get('exclude_providers'),
-                    requires=server_config.get('requires_providers'),
-                    label=server_config.get('label'),
-                    description=server_config.get('description'),
-                    default_tools=server_config.get('default_enabled_tools'),
-                    collapse_tools=server_config.get('collapse_tools', False),
-                    flyout=server_config.get('flyout', False),
-                )
+            server_id = server_config.command or server_config.url or server_config.label
+            meta: dict[str, Any] = dict(
+                enabled=server_config.enabled_by_default,
+                category=server_config.category,
+                exclude=server_config.exclude_providers,
+                requires=server_config.requires_providers,
+                label=server_config.label,
+                description=server_config.description,
+                default_tools=server_config.default_enabled_tools,
+                collapse_tools=server_config.collapse_tools,
+                flyout=server_config.flyout,
+            )
             meta['server_id'] = server_id
             meta['group_id'] = meta['label'] or server_id or f"mcp_{idx}"
             server_metas.append(meta)
@@ -179,7 +178,7 @@ class ChatSession:
 
         # ── Phase 2: register tools (fast, in-memory) ──
         for meta, result in zip(server_metas, results):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 logger.error(f"Failed to connect to MCP server {meta['group_id']}: {result}")
                 continue
 
@@ -248,12 +247,12 @@ class ChatSession:
         self._mcp_tools_discovered = True
 
     @property
-    def mcp_prompt_hints(self) -> List[str]:
+    def mcp_prompt_hints(self) -> list[str]:
         """Prompt snippets collected from in-process MCP servers."""
         return self._mcp_prompt_hints
 
     @property
-    def mcp_client_renderers(self) -> List[Dict[str, str]]:
+    def mcp_client_renderers(self) -> list[dict[str, str]]:
         """Client-side renderers collected from in-process MCP servers."""
         return self._mcp_client_renderers
 
@@ -276,16 +275,16 @@ class ChatSession:
         self._mcp_tools_discovered = False
 
     @property
-    def system_prompt(self) -> Optional[str]:
+    def system_prompt(self) -> str | None:
         """Get the current system prompt."""
         return self._system_prompt
 
     @system_prompt.setter
-    def system_prompt(self, value: Optional[str]) -> None:
+    def system_prompt(self, value: str | None) -> None:
         """Set a new system prompt."""
         self._system_prompt = value
 
-    def _get_client(self, temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> 'LlmClient':
+    def _get_client(self, temperature: float | None = None, max_tokens: int | None = None) -> LlmClient:
         """Get or create a client with the specified parameters."""
         # Check if the model has an enforced temperature
         if self.model_info.enforced_temperature is not None:
@@ -336,7 +335,7 @@ class ChatSession:
         self._last_client_config = cache_key
         return self._client
 
-    def _build_toolboxes(self) -> List:
+    def _build_toolboxes(self) -> list[Any]:
         """Build toolboxes based on tools config.
 
         Uses ToolRegistry and ToolboxAdapter for flexible tool management.
@@ -355,7 +354,7 @@ class ChatSession:
                 async def _async_tool_cost():
                     try:
                         for limit in self.budget_manager.limits.values():
-                            await limit.reserve_budget_async(cost_usd)
+                            await limit.reserve_budget_async(cost_usd, user_id=self.user_id)
                             await limit.log_usage_async(
                                 model_name=f"openai.{tool_name}",
                                 tokens_input=0,
@@ -418,9 +417,9 @@ class ChatSession:
 
     def _prepare_messages(
         self,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
         skip_preamble: bool = False,
-    ) -> List[Union[LlmSystemMessage, LlmHumanMessage, LlmAIMessage]]:
+    ) -> list[LlmSystemMessage | LlmHumanMessage | LlmAIMessage]:
         """Convert chat history to message format while respecting token limits."""
         # Use provided system prompt or fall back to default
         current_system_prompt = system_prompt if system_prompt is not None else self._system_prompt
@@ -450,7 +449,7 @@ class ChatSession:
         available_tokens = max_input - system_tokens
 
         # Process messages from newest to oldest, skipping stale content
-        messages = []
+        messages: list[LlmSystemMessage | LlmHumanMessage | LlmAIMessage] = []
         current_tokens = 0
 
         for msg in reversed(self.history.messages):
@@ -460,6 +459,7 @@ class ChatSession:
             content = msg.content
             # Skip images flagged as stale (exceeded max_history_images limit)
             images = msg.images if (msg.images and not msg.images_stale) else None
+            new_msg: LlmHumanMessage | LlmAIMessage
             if msg.role == Role.USER:
                 new_msg = LlmHumanMessage(content=content, images=images)
             elif msg.role == Role.ASSISTANT:
@@ -484,7 +484,7 @@ class ChatSession:
 
         return messages
 
-    def _extract_generated_images(self, response: str) -> List[str]:
+    def _extract_generated_images(self, response: str) -> list[str]:
         """Extract base64 image data from generated image function results.
 
         Args:
@@ -495,7 +495,7 @@ class ChatSession:
         """
         import json
 
-        images = []
+        images: list[str] = []
 
         # Check if response contains generate_image function result
         if '"generate_image"' not in response or '"function_call_result"' not in response:
@@ -554,7 +554,7 @@ class ChatSession:
 
         return cleaned
 
-    def add_message(self, role: Union[Role, str], content: str, images: Optional[List[str]] = None) -> None:
+    def add_message(self, role: Role | str, content: str, images: list[str] | None = None) -> None:
         """Add a message to the chat history.
 
         Args:
@@ -596,7 +596,7 @@ class ChatSession:
         this counts ALL non-stale messages + system prompt + condensed summary.
         Used to decide whether condensation is needed.
         """
-        msgs = []
+        msgs: list[LlmSystemMessage | LlmHumanMessage | LlmAIMessage] = []
 
         # System prompt (with condensed summary if present)
         sp = self._system_prompt or ""
@@ -706,7 +706,7 @@ class ChatSession:
                 toolboxes=[],
                 reasoning_effort=ReasoningEffort.NONE,
             )
-            summary_messages = [
+            summary_messages: list[LlmSystemMessage | LlmHumanMessage | LlmAIMessage] = [
                 LlmSystemMessage(content=(
                     "You are a conversation summarizer. Your task is to produce a DETAILED and LONG "
                     "summary that captures everything needed to continue the conversation without "
@@ -777,7 +777,7 @@ class ChatSession:
         self.history.clear()
         self._condensed_summary = None
 
-    def _estimate_tokens(self, messages: List[Union[LlmSystemMessage, LlmHumanMessage, LlmAIMessage]]) -> int:
+    def _estimate_tokens(self, messages: list[LlmSystemMessage | LlmHumanMessage | LlmAIMessage]) -> int:
         """Estimate tokens in messages including text and images.
 
         Image token estimation uses base64 data length to approximate pixel count,
@@ -837,12 +837,12 @@ class ChatSession:
         message: str,
         *,
         streaming: bool = False,
-        system_prompt: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        images: Optional[List[str]] = None,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        images: list[str] | None = None,
         skip_preamble: bool = False,
-    ) -> Union[LlmAIMessage, AsyncIterator[LlmMessageChunk]]:
+    ) -> LlmAIMessage | AsyncIterator[LlmMessageChunk]:
         """Send a message and get a response asynchronously.
 
         Args:
@@ -876,12 +876,14 @@ class ChatSession:
 
         try:
             # Reserve budget if budget manager is configured
+            effective_reserved_output = max_output_tokens
             if self.budget_manager:
-                await self.budget_manager.reserve_budget_async(
+                effective_reserved_output = await self.budget_manager.reserve_budget_async(
                     input_tokens=estimated_input_tokens,
                     max_output_tokens=max_output_tokens,
                     input_token_price=self.model_info.input_token_price,
-                    output_token_price=self.model_info.output_token_price
+                    output_token_price=self.model_info.output_token_price,
+                    user_id=self.user_id,
                 )
 
             # Get client with current parameters
@@ -909,7 +911,6 @@ class ChatSession:
                     nonlocal full_response, text_only_response, last_chunk
 
                     # State machine for filtering base64 images from streaming chunks
-                    from llming_models.utils.image_utils import is_likely_image_data
 
                     filter_state = {
                         "state": "normal",  # "normal", "buffering", "in_base64"
@@ -935,7 +936,7 @@ class ChatSession:
                                 if char == ")":
                                     state = "normal"
                                     output += "[image]\n"
-                                    logger.debug(f"[STREAM] Filtered base64 image from chunk")
+                                    logger.debug("[STREAM] Filtered base64 image from chunk")
                                 # else: skip the base64 character
                             elif state == "buffering":
                                 # We saw ![, buffering to check for data:image
@@ -1012,9 +1013,10 @@ class ChatSession:
                         actual_output_tokens = metadata.get('total_output_tokens') or live_usage['output_tokens'] or self._estimate_tokens([LlmAIMessage(content=text_only_response)])
 
                         await self.budget_manager.return_unused_budget_async(
-                            reserved_output_tokens=max_output_tokens,
+                            reserved_output_tokens=effective_reserved_output,
                             actual_output_tokens=actual_output_tokens,
-                            output_token_price=self.model_info.output_token_price
+                            output_token_price=self.model_info.output_token_price,
+                            user_id=self.user_id,
                         )
 
                         # Log usage information in all budget limits
@@ -1064,9 +1066,10 @@ class ChatSession:
                     actual_output_tokens = metadata.get('output_tokens') or metadata.get('total_output_tokens') or self._estimate_tokens([LlmAIMessage(content=response_text)])
 
                     await self.budget_manager.return_unused_budget_async(
-                        reserved_output_tokens=max_output_tokens,
+                        reserved_output_tokens=effective_reserved_output,
                         actual_output_tokens=actual_output_tokens,
-                        output_token_price=self.model_info.output_token_price
+                        output_token_price=self.model_info.output_token_price,
+                        user_id=self.user_id,
                     )
 
                     # Log usage information in all budget limits
@@ -1100,7 +1103,7 @@ class ChatSession:
                 logger.warning("[OP] chat_async — budget_exceeded (user=%s, model=%s, %.0fms, pid=%d)", self.user_id, _model, _elapsed, _pid)
                 raise
             logger.error("[OP] chat_async — failed (user=%s, model=%s, %.0fms, pid=%d): %s", self.user_id, _model, _elapsed, _pid, type(e).__name__)
-            raise RuntimeError(f"Error in async chat completion: {str(e)}")
+            raise RuntimeError("Chat completion failed. Check server logs for details.")
 
     def copy_history_from(self, other: 'ChatSession') -> None:
         """Copy history from another session."""
@@ -1113,9 +1116,9 @@ class ChatSession:
         cls,
         config: LLMConfig,
         history: ChatHistory,
-        system_prompt: Optional[str] = None,
-        budget_manager: Optional[LLMBudgetManager] = None,
-        user_id: Optional[str] = None
+        system_prompt: str | None = None,
+        budget_manager: LLMBudgetManager | None = None,
+        user_id: str | None = None
     ) -> 'ChatSession':
         """Create a new session with existing history.
         

@@ -1,23 +1,31 @@
 """Base provider interface for LLM providers."""
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Any, TYPE_CHECKING
 
 from .llm_provider_models import LLMInfo
 from ..llm_base_client import LlmClient
 from ..tools.llm_toolbox import LlmToolbox
 
+if TYPE_CHECKING:
+    from ..credentials import ProviderCredentials
+
 
 class BaseProvider(ABC):
     """Base class for LLM providers."""
 
-    def __init__(self, name: str, label: str):
+    def __init__(self, name: str, label: str, credentials: ProviderCredentials | None = None):
         """Initialize provider.
 
         :param name: The provider name, "openai", "anthropic", etc.
         :param label: The provider label, "OpenAI", "Anthropic", etc.
+        :param credentials: Optional explicit credentials.  Subclasses fall
+            back to environment variables when *None*.
         """
         self.name = name
         self.label = label
+        self._credentials = credentials
 
     @property
     @abstractmethod
@@ -26,7 +34,7 @@ class BaseProvider(ABC):
         pass
 
     @abstractmethod
-    def get_models(self) -> List[LLMInfo]:
+    def get_models(self) -> list[LLMInfo]:
         """Get list of available models for this provider."""
         pass
 
@@ -35,11 +43,11 @@ class BaseProvider(ABC):
         self,
         model: str,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         streaming: bool = False,
-        base_url: Optional[str] = None,
-        toolboxes: Optional[List[LlmToolbox]] = None,
-        **kwargs
+        base_url: str | None = None,
+        toolboxes: list[LlmToolbox] | None = None,
+        **kwargs: Any,
     ) -> LlmClient:
         """Create an LLM client.
 

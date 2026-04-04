@@ -9,6 +9,7 @@ import logging
 from typing import (
     Any,
     AsyncIterator,
+    Callable,
     Iterator,
     List,
     Union,
@@ -19,6 +20,7 @@ from typing import (
 from anthropic import Anthropic, AsyncAnthropic, AnthropicFoundry, AsyncAnthropicFoundry
 
 from llming_models.llm_base_client import LlmClient
+from llming_models.llm_base_models import Role
 from llming_models.messages import (
     LlmAIMessage,
     LlmHumanMessage,
@@ -83,7 +85,7 @@ def _convert_messages(
         # Check if this is a human message with images that should be included
         if isinstance(m, LlmHumanMessage) and m.images and i in messages_with_images_indices:
             # Multimodal format
-            content_parts = [{"type": "text", "text": m.content}]
+            content_parts: List[Dict[str, Any]] = [{"type": "text", "text": m.content}]
             for img_base64 in m.images:
                 # Detect image type from base64 header or default to png
                 if img_base64.startswith("/9j/"):
@@ -119,7 +121,7 @@ def _convert_tools(toolboxes: List[LlmToolbox]) -> List[Dict[str, Any]]:
     Handles both regular function tools (LlmTool) and provider-native tools
     like web_search which use special Anthropic tool types.
     """
-    tools = []
+    tools: List[Dict[str, Any]] = []
     for toolbox in toolboxes:
         for tool in toolbox.tools:
             if isinstance(tool, LlmTool):
@@ -200,10 +202,10 @@ class AnthropicClient(LlmClient):
             raise ValueError("ANTHROPIC_API_KEY must be provided")
 
         if azure_base_url:
-            self._client = AnthropicFoundry(
+            self._client: Anthropic | AnthropicFoundry = AnthropicFoundry(
                 api_key=api_key, base_url=azure_base_url
             )
-            self._aclient = AsyncAnthropicFoundry(
+            self._aclient: AsyncAnthropic | AsyncAnthropicFoundry = AsyncAnthropicFoundry(
                 api_key=api_key, base_url=azure_base_url
             )
         else:
@@ -403,7 +405,7 @@ class AnthropicClient(LlmClient):
             for text in stream.text_stream:
                 yield LlmMessageChunk(
                     content=text,
-                    role="assistant",
+                    role=Role.ASSISTANT,
                     index=next(chunk_index),
                     is_final=False,
                     response_metadata={}
@@ -411,7 +413,7 @@ class AnthropicClient(LlmClient):
 
         yield LlmMessageChunk(
             content="",
-            role="assistant",
+            role=Role.ASSISTANT,
             index=next(chunk_index),
             is_final=True,
             response_metadata={}
@@ -420,7 +422,7 @@ class AnthropicClient(LlmClient):
     async def astream(
         self,
         messages: list[Union[LlmSystemMessage, LlmHumanMessage, LlmAIMessage]],
-        usage_callback: Optional[callable] = None,
+        usage_callback: Optional[Callable[..., Any]] = None,
     ) -> AsyncIterator[LlmMessageChunk]:
         """Stream responses from the model asynchronously with tool support.
 
@@ -450,8 +452,8 @@ class AnthropicClient(LlmClient):
 
         while iteration < max_tool_iterations:
             iteration += 1
-            tool_use_blocks = []
-            current_tool_use = None
+            tool_use_blocks: List[Dict[str, Any]] = []
+            current_tool_use: Dict[str, Any] | None = None
             current_tool_input = ""
 
             async with self._aclient.messages.stream(**kwargs) as stream:
@@ -470,7 +472,7 @@ class AnthropicClient(LlmClient):
                                 # Emit pending indicator with structured tool info
                                 yield LlmMessageChunk(
                                     content="",
-                                    role="assistant",
+                                    role=Role.ASSISTANT,
                                     index=next(chunk_index),
                                     is_final=False,
                                     response_metadata={},
@@ -488,7 +490,7 @@ class AnthropicClient(LlmClient):
                                     # Text content
                                     yield LlmMessageChunk(
                                         content=delta.text,
-                                        role="assistant",
+                                        role=Role.ASSISTANT,
                                         index=next(chunk_index),
                                         is_final=False,
                                         response_metadata={}
@@ -543,9 +545,9 @@ class AnthropicClient(LlmClient):
                 tool_results = []
 
                 for tool_block in tool_use_blocks:
-                    tool_name = tool_block['name']
-                    tool_input = tool_block['input']
-                    tool_id = tool_block['id']
+                    tool_name: str = tool_block['name']
+                    tool_input: dict[str, Any] = tool_block['input']
+                    tool_id: str = tool_block['id']
 
                     # Execute the tool
                     result = None
@@ -560,13 +562,13 @@ class AnthropicClient(LlmClient):
                                     None, functools.partial(func, **tool_input)
                                 )
                             except Exception as e:
-                                logger.error(f"Tool execution error for {tool_name}: {e}")
-                                error_msg = str(e)
+                                logger.error("Tool execution error: %s", e, exc_info=True)
+                                error_msg = "Tool execution failed"
 
                     # Emit function result with structured tool info
                     yield LlmMessageChunk(
                         content="",
-                        role="assistant",
+                        role=Role.ASSISTANT,
                         index=next(chunk_index),
                         is_final=False,
                         response_metadata={},
@@ -602,7 +604,7 @@ class AnthropicClient(LlmClient):
 
                 # Add assistant message using final_message content (includes both text and tool_use)
                 # This ensures we don't lose any text that was streamed before tool calls
-                assistant_content = []
+                assistant_content: List[Dict[str, Any]] = []
                 for block in final_message.content:
                     if block.type == "text":
                         assistant_content.append({"type": "text", "text": block.text})
@@ -632,7 +634,7 @@ class AnthropicClient(LlmClient):
         # Final chunk with total usage
         yield LlmMessageChunk(
             content="",
-            role="assistant",
+            role=Role.ASSISTANT,
             index=next(chunk_index),
             is_final=True,
             response_metadata={

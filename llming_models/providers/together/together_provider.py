@@ -1,12 +1,18 @@
 """Together provider implementation."""
+from __future__ import annotations
+
 import os
-from typing import List, Optional
+from typing import Any, TYPE_CHECKING
 
 from llming_models.providers import BaseProvider, register_provider
 from llming_models.llm_base_client import LlmClient
 from .deepseek import TOGETHER_DEEPSEEK_MODELS
 from ..llm_provider_models import LLMInfo
 from llming_models.providers.openai_compat_client import OpenAICompatibleClient
+from llming_models.tools.llm_toolbox import LlmToolbox
+
+if TYPE_CHECKING:
+    from llming_models.credentials import ProviderCredentials
 
 
 @register_provider("together")
@@ -15,17 +21,21 @@ class TogetherProvider(BaseProvider):
 
     DEFAULT_BASE_URL = "https://api.together.xyz/v1"
 
-    def __init__(self):
+    def __init__(self, credentials: ProviderCredentials | None = None):
         """Initialize Together provider."""
-        super().__init__("together", "Together")
-        self._api_key = os.environ.get('TOGETHER_API_KEY')
+        super().__init__("together", "Together", credentials)
+        if self._credentials is None:
+            key = os.environ.get('TOGETHER_API_KEY')
+            if key:
+                from llming_models.credentials import ProviderCredentials as PC
+                self._credentials = PC(api_key=key)
 
     @property
     def is_available(self) -> bool:
         """Check if provider is available (has valid API key)."""
-        return self._api_key is not None
+        return self._credentials is not None
 
-    def get_models(self) -> List[LLMInfo]:
+    def get_models(self) -> list[LLMInfo]:
         """Get list of available Together-hosted models."""
         return [
             *TOGETHER_DEEPSEEK_MODELS,
@@ -35,10 +45,11 @@ class TogetherProvider(BaseProvider):
         self,
         model: str,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         streaming: bool = False,
-        base_url: Optional[str] = None,
-        **kwargs
+        base_url: str | None = None,
+        toolboxes: list[LlmToolbox] | None = None,
+        **kwargs: Any,
     ) -> LlmClient:
         """Create a Together chat model client.
 
@@ -48,6 +59,7 @@ class TogetherProvider(BaseProvider):
             max_tokens: Maximum tokens to generate
             streaming: Whether to stream responses
             base_url: Optional base URL for the API
+            toolboxes: Optional list of toolboxes (not used by Together)
             **kwargs: Additional arguments
 
         Returns:
@@ -59,11 +71,12 @@ class TogetherProvider(BaseProvider):
         if not self.is_available:
             raise ValueError("TOGETHER_API_KEY environment variable is not set")
 
+        assert self._credentials is not None
         return OpenAICompatibleClient(
-            api_key=self._api_key,
+            api_key=self._credentials.api_key.get_secret_value(),
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
             streaming=streaming,
-            base_url=base_url or self.DEFAULT_BASE_URL
+            base_url=base_url or self._credentials.base_url or self.DEFAULT_BASE_URL
         )

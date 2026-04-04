@@ -3,7 +3,10 @@
 Deployment names map to Azure AI Services deployment names.
 These mirror the standard Anthropic models but are hosted in Azure.
 """
+from __future__ import annotations
+
 import os
+from typing import Any
 
 from ..llm_provider_models import LLMInfo, ModelSize
 
@@ -25,7 +28,7 @@ def get_azure_anthropic_models() -> list[LLMInfo]:
         return []
 
     # Base definitions keyed by canonical name
-    model_defs = {
+    model_defs: dict[str, dict[str, Any]] = {
         "claude_opus": dict(
             label="Claude Opus 4.6",
             description="Most capable Claude model for complex tasks.",

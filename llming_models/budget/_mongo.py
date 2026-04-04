@@ -1,13 +1,15 @@
 """Shared async MongoDB client helper."""
+from __future__ import annotations
 
 import os
 import threading
+from typing import Any
 
-_async_cache: dict = {}
-_async_lock = threading.Lock()
+_async_cache: dict[str, Any] = {}
+_async_lock: threading.Lock = threading.Lock()
 
 
-def get_async_mongo_client(url: str | None = None):
+def get_async_mongo_client(url: str | None = None) -> Any:
     """Return a shared AsyncMongoClient for the given URL."""
     from pymongo import AsyncMongoClient
 

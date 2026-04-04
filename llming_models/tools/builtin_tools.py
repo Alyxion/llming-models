@@ -1,6 +1,10 @@
 """Built-in tools for LLM interactions."""
+from __future__ import annotations
+
 import logging
-from typing import Optional, Callable
+from collections.abc import Callable
+from typing import Any
+
 from .llm_tool import LlmTool
 from .llm_toolbox import LlmToolbox
 
@@ -23,7 +27,7 @@ IMAGE_GEN_PRICING = {
 DALLE3_PRICING = IMAGE_GEN_PRICING
 
 
-def create_image_generation_tool(openai_client, cost_callback: Optional[Callable[[str, float], None]] = None) -> LlmTool:
+def create_image_generation_tool(openai_client: Any, cost_callback: Callable[[str, float], None] | None = None) -> LlmTool:
     """Create a GPT Image generation tool.
 
     Args:
@@ -112,7 +116,7 @@ def create_web_search_toolbox() -> LlmToolbox:
     )
 
 
-def create_image_generation_toolbox(openai_client, cost_callback: Optional[Callable[[str, float], None]] = None) -> LlmToolbox:
+def create_image_generation_toolbox(openai_client: Any, cost_callback: Callable[[str, float], None] | None = None) -> LlmToolbox:
     """Create an image generation toolbox.
 
     Args:

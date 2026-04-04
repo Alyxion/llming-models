@@ -11,10 +11,9 @@ Provides fake database tools for:
 Usage:
     python -m llming_models.tools.mcp.sample_server
 """
+from __future__ import annotations
 
 import asyncio
-import json
-from datetime import datetime
 from typing import Any
 
 from mcp.server import Server
@@ -23,7 +22,7 @@ from mcp.types import TextContent, Tool
 
 
 # Fake database
-PRODUCTS_DB = {
+PRODUCTS_DB: dict[str, dict[str, Any]] = {
     "P001": {"id": "P001", "name": "Wireless Headphones", "category": "Electronics", "price": 79.99, "stock": 150},
     "P002": {"id": "P002", "name": "USB-C Cable", "category": "Electronics", "price": 12.99, "stock": 500},
     "P003": {"id": "P003", "name": "Laptop Stand", "category": "Office", "price": 45.00, "stock": 75},
@@ -34,13 +33,13 @@ PRODUCTS_DB = {
     "P008": {"id": "P008", "name": "Notebook Set", "category": "Office", "price": 18.00, "stock": 450},
 }
 
-CUSTOMERS_DB = {
+CUSTOMERS_DB: dict[str, dict[str, Any]] = {
     "C001": {"id": "C001", "name": "John Smith", "email": "john@example.com", "tier": "Gold", "total_orders": 15},
     "C002": {"id": "C002", "name": "Jane Doe", "email": "jane@example.com", "tier": "Silver", "total_orders": 8},
     "C003": {"id": "C003", "name": "Bob Wilson", "email": "bob@example.com", "tier": "Bronze", "total_orders": 3},
 }
 
-CATEGORIES = ["Electronics", "Office", "Kitchen"]
+CATEGORIES: list[str] = ["Electronics", "Office", "Kitchen"]
 
 
 # Create MCP server
@@ -151,13 +150,13 @@ async def list_tools() -> list[Tool]:
 
 
 @server.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+async def call_tool(name: str, arguments: dict[str, object]) -> list[TextContent]:
     """Handle tool calls."""
 
     if name == "search_products":
-        query = arguments.get("query", "").lower()
-        category = arguments.get("category", "")
-        max_results = arguments.get("max_results", 5)
+        query = str(arguments.get("query", "")).lower()
+        category = str(arguments.get("category", ""))
+        max_results = int(str(arguments.get("max_results", 5)))
 
         results = []
         for product in PRODUCTS_DB.values():
@@ -178,7 +177,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text="\n".join(lines))]
 
     elif name == "get_product_details":
-        product_id = arguments.get("product_id", "")
+        product_id = str(arguments.get("product_id", ""))
 
         if product_id not in PRODUCTS_DB:
             return [TextContent(type="text", text=f"Product '{product_id}' not found")]
@@ -203,8 +202,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text="\n".join(lines))]
 
     elif name == "get_customer":
-        customer_id = arguments.get("customer_id", "")
-        email = arguments.get("email", "")
+        customer_id = str(arguments.get("customer_id", ""))
+        email = str(arguments.get("email", ""))
 
         customer = None
         if customer_id and customer_id in CUSTOMERS_DB:
@@ -225,8 +224,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text=details)]
 
     elif name == "check_inventory":
-        low_stock_only = arguments.get("low_stock_only", False)
-        category = arguments.get("category", "")
+        low_stock_only = bool(arguments.get("low_stock_only", False))
+        category = str(arguments.get("category", ""))
 
         products = list(PRODUCTS_DB.values())
 
@@ -249,7 +248,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
 
-async def main():
+async def main() -> None:
     """Run the MCP server."""
     import sys
     print("Sample DB MCP Server starting...", file=sys.stderr)

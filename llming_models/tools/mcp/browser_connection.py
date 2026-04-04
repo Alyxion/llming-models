@@ -4,9 +4,11 @@ Proxies MCP tool calls through the WebSocket to a browser-side Web Worker
 that executes the MCP server's JavaScript code. The Worker is spawned from
 nudge JS files stored in MongoDB.
 """
+from __future__ import annotations
+
 import asyncio
 import logging
-from typing import Any, Dict
+from typing import Any
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -20,7 +22,7 @@ class MCPBrowserConnection:
     session's ``pending_requests`` dict.
     """
 
-    def __init__(self, nudge_uid: str, session_ctx: dict):
+    def __init__(self, nudge_uid: str, session_ctx: dict[str, Any]) -> None:
         """
         Args:
             nudge_uid: UID of the MCP nudge this connection serves.
@@ -30,7 +32,7 @@ class MCPBrowserConnection:
         self.nudge_uid = nudge_uid
         self._ctx = session_ctx
 
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         """Forward a tool call to the browser Worker and await the result.
 
         Sends ``{type: "browser_mcp_call", ...}`` over the WebSocket and
@@ -42,7 +44,7 @@ class MCPBrowserConnection:
 
         request_id = str(uuid4())
         loop = self._ctx.get("loop") or asyncio.get_running_loop()
-        future: asyncio.Future = loop.create_future()
+        future: asyncio.Future[Any] = loop.create_future()
         self._ctx["pending_requests"][request_id] = {
             "future": future,
             "nudge_uid": self.nudge_uid,
@@ -68,7 +70,7 @@ class MCPBrowserConnection:
             raise RuntimeError(f"Browser MCP tool error: {result_msg['error']}")
         return result_msg.get("result", "")
 
-    async def close(self):
+    async def close(self) -> None:
         """Send stop message to browser to terminate the Worker."""
         controller = self._ctx.get("controller")
         if controller:
