@@ -327,6 +327,7 @@ class ToolboxAdapter:
                     future = asyncio.run_coroutine_threadsafe(_execute(), loop)
                     return future.result(timeout=30)
                 except RuntimeError:
+                    logger.warning("No running event loop found — using asyncio.run() fallback for tool execution")
                     return asyncio.run(_execute())
 
         llm_tool = LlmTool(

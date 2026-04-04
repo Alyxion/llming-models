@@ -70,10 +70,10 @@ class TestMCPStdioConnection:
         mock_process.stdin = MagicMock()
         mock_process.stdout = MagicMock()
         mock_process.stderr = MagicMock()
-        mock_process.poll.return_value = 0  # Process exited immediately
+        mock_process.returncode = 0  # Process exited immediately
 
         # Mock _initialize to avoid actually sending JSON-RPC
-        with patch("subprocess.Popen", return_value=mock_process):
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_process):
             with patch.object(conn, "_initialize", new_callable=AsyncMock, return_value={}):
                 with patch.object(conn, "_read_responses", new_callable=AsyncMock):
                     await conn.start()
@@ -163,7 +163,7 @@ class TestMCPStdioConnection:
 
         mock_process = MagicMock()
         mock_process.terminate = MagicMock()
-        mock_process.wait = MagicMock()
+        mock_process.wait = AsyncMock()
         conn.process = mock_process
 
         # Create a real asyncio task that will be cancelled
@@ -182,8 +182,6 @@ class TestMCPStdioConnection:
     @pytest.mark.asyncio
     async def test_close_kills_on_timeout(self):
         """If process doesn't terminate within timeout, kill it."""
-        import subprocess as sp
-
         cfg = MCPServerConfig(command="python")
         conn = MCPStdioConnection(cfg)
         conn._started = True
@@ -191,11 +189,14 @@ class TestMCPStdioConnection:
 
         mock_process = MagicMock()
         mock_process.terminate = MagicMock()
-        mock_process.wait = MagicMock(side_effect=sp.TimeoutExpired(cmd="python", timeout=5))
         mock_process.kill = MagicMock()
+        # After kill, the second wait() succeeds
+        mock_process.wait = AsyncMock(return_value=None)
         conn.process = mock_process
 
-        await conn.close()
+        # Make wait_for raise TimeoutError (simulating slow shutdown)
+        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+            await conn.close()
 
         mock_process.kill.assert_called_once()
 
@@ -656,24 +657,22 @@ class TestMCPStdioReadResponses:
         cfg = MCPServerConfig(command="echo")
         conn = MCPStdioConnection(cfg)
 
-        # Set up a mock process with controlled stdout
+        # Set up a mock process with async stdout
+        response_bytes = b'{"jsonrpc": "2.0", "id": 1, "result": {"ok": true}}\n'
+
+        mock_stdout = AsyncMock()
+        mock_stdout.readline = AsyncMock(side_effect=[response_bytes, b""])
+
         mock_process = MagicMock()
-        mock_process.poll.side_effect = [None, 0]  # First call: running, second: exited
-        response_line = '{"jsonrpc": "2.0", "id": 1, "result": {"ok": true}}\n'
-
-        async def mock_readline():
-            return response_line
-
-        mock_process.stdout = MagicMock()
+        mock_process.returncode = None  # Process still running
+        mock_process.stdout = mock_stdout
         conn.process = mock_process
 
         # Set up a pending future
-        future = asyncio.get_event_loop().create_future()
+        future = asyncio.get_running_loop().create_future()
         conn._pending_requests[1] = future
 
-        with patch("asyncio.get_event_loop") as mock_loop:
-            mock_loop.return_value.run_in_executor = AsyncMock(return_value=response_line)
-            await conn._read_responses()
+        await conn._read_responses()
 
         assert future.result() == {"ok": True}
 
@@ -683,19 +682,20 @@ class TestMCPStdioReadResponses:
         cfg = MCPServerConfig(command="echo")
         conn = MCPStdioConnection(cfg)
 
-        mock_process = MagicMock()
-        mock_process.poll.side_effect = [None, 0]
-        error_line = '{"jsonrpc": "2.0", "id": 1, "error": {"message": "Not found"}}\n'
+        error_bytes = b'{"jsonrpc": "2.0", "id": 1, "error": {"message": "Not found"}}\n'
 
-        mock_process.stdout = MagicMock()
+        mock_stdout = AsyncMock()
+        mock_stdout.readline = AsyncMock(side_effect=[error_bytes, b""])
+
+        mock_process = MagicMock()
+        mock_process.returncode = None
+        mock_process.stdout = mock_stdout
         conn.process = mock_process
 
-        future = asyncio.get_event_loop().create_future()
+        future = asyncio.get_running_loop().create_future()
         conn._pending_requests[1] = future
 
-        with patch("asyncio.get_event_loop") as mock_loop:
-            mock_loop.return_value.run_in_executor = AsyncMock(return_value=error_line)
-            await conn._read_responses()
+        await conn._read_responses()
 
         with pytest.raises(MCPError, match="Not found"):
             future.result()
@@ -706,32 +706,32 @@ class TestMCPStdioReadResponses:
         cfg = MCPServerConfig(command="echo")
         conn = MCPStdioConnection(cfg)
 
-        mock_process = MagicMock()
-        mock_process.poll.side_effect = [None, 0]
-        bad_line = "this is not json\n"
+        mock_stdout = AsyncMock()
+        mock_stdout.readline = AsyncMock(side_effect=[b"this is not json\n", b""])
 
-        mock_process.stdout = MagicMock()
+        mock_process = MagicMock()
+        mock_process.returncode = None
+        mock_process.stdout = mock_stdout
         conn.process = mock_process
 
-        with patch("asyncio.get_event_loop") as mock_loop:
-            mock_loop.return_value.run_in_executor = AsyncMock(return_value=bad_line)
-            # Should not raise
-            await conn._read_responses()
+        # Should not raise
+        await conn._read_responses()
 
     @pytest.mark.asyncio
     async def test_read_responses_stops_on_empty_line(self):
-        """_read_responses exits when stdout returns empty string."""
+        """_read_responses exits when stdout returns empty bytes."""
         cfg = MCPServerConfig(command="echo")
         conn = MCPStdioConnection(cfg)
 
+        mock_stdout = AsyncMock()
+        mock_stdout.readline = AsyncMock(return_value=b"")
+
         mock_process = MagicMock()
-        mock_process.poll.return_value = None  # Still "running"
-        mock_process.stdout = MagicMock()
+        mock_process.returncode = None  # Still "running"
+        mock_process.stdout = mock_stdout
         conn.process = mock_process
 
-        with patch("asyncio.get_event_loop") as mock_loop:
-            mock_loop.return_value.run_in_executor = AsyncMock(return_value="")
-            await conn._read_responses()
+        await conn._read_responses()
 
     @pytest.mark.asyncio
     async def test_read_responses_no_stdout(self):
@@ -740,7 +740,7 @@ class TestMCPStdioReadResponses:
         conn = MCPStdioConnection(cfg)
 
         mock_process = MagicMock()
-        mock_process.poll.return_value = None
+        mock_process.returncode = None
         mock_process.stdout = None
         conn.process = mock_process
 
@@ -761,8 +761,12 @@ class TestMCPStdioRequestFlow:
         cfg = MCPServerConfig(command="python")
         conn = MCPStdioConnection(cfg)
 
+        mock_stdin = MagicMock()
+        mock_stdin.write = MagicMock()
+        mock_stdin.drain = AsyncMock()
+
         mock_process = MagicMock()
-        mock_process.stdin = MagicMock()
+        mock_process.stdin = mock_stdin
         conn.process = mock_process
 
         # Create a future that will never resolve
@@ -777,15 +781,18 @@ class TestMCPStdioRequestFlow:
         cfg = MCPServerConfig(command="python")
         conn = MCPStdioConnection(cfg)
 
+        mock_stdin = MagicMock()
+        mock_stdin.write = MagicMock()
+        mock_stdin.drain = AsyncMock()
+
         mock_process = MagicMock()
-        mock_process.stdin = MagicMock()
+        mock_process.stdin = mock_stdin
         conn.process = mock_process
 
         await conn._send_notification("notifications/test", {"key": "val"})
 
-        written = mock_process.stdin.write.call_args[0][0]
-        import json
-        parsed = json.loads(written.strip())
+        written = mock_stdin.write.call_args[0][0]
+        parsed = json.loads(written.decode().strip())
         assert parsed["jsonrpc"] == "2.0"
         assert parsed["method"] == "notifications/test"
         assert "id" not in parsed  # Notifications don't have ids

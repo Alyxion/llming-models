@@ -9,7 +9,6 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -64,7 +63,7 @@ class MCPStdioConnection(MCPConnection):
             raise ValueError("MCPServerConfig must have 'command' for stdio transport")
 
         self.config = config
-        self.process: subprocess.Popen[str] | None = None
+        self.process: asyncio.subprocess.Process | None = None
         self._request_id = 0
         self._pending_requests: dict[int, asyncio.Future[Any]] = {}
         self._reader_task: asyncio.Task[None] | None = None
@@ -86,15 +85,13 @@ class MCPStdioConnection(MCPConnection):
             env.update(self.config.env)
 
         # Start process
-        self.process = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+        self.process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             env=env,
             cwd=self.config.cwd,
-            text=True,
-            bufsize=1,
         )
 
         # Start reader task
@@ -131,19 +128,17 @@ class MCPStdioConnection(MCPConnection):
             "params": params
         }
 
-        notification_str = json.dumps(notification) + "\n"
-        self.process.stdin.write(notification_str)
-        self.process.stdin.flush()
+        msg_bytes = (json.dumps(notification) + "\n").encode()
+        self.process.stdin.write(msg_bytes)
+        await self.process.stdin.drain()
 
     async def _read_responses(self) -> None:
         """Read JSON-RPC responses from stdout."""
         try:
-            while self.process and self.process.poll() is None:
+            while self.process and self.process.returncode is None:
                 if not self.process.stdout:
                     break
-                line = await asyncio.get_event_loop().run_in_executor(
-                    None, self.process.stdout.readline
-                )
+                line = await self.process.stdout.readline()
                 if not line:
                     break
 
@@ -180,13 +175,13 @@ class MCPStdioConnection(MCPConnection):
         }
 
         # Create future for response
-        future: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending_requests[request_id] = future
 
         # Send request
-        request_str = json.dumps(request) + "\n"
-        self.process.stdin.write(request_str)
-        self.process.stdin.flush()
+        msg_bytes = (json.dumps(request) + "\n").encode()
+        self.process.stdin.write(msg_bytes)
+        await self.process.stdin.drain()
 
         # Wait for response (with timeout)
         try:
@@ -237,9 +232,10 @@ class MCPStdioConnection(MCPConnection):
         if self.process:
             self.process.terminate()
             try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
+                await asyncio.wait_for(self.process.wait(), timeout=5)
+            except asyncio.TimeoutError:
                 self.process.kill()
+                await self.process.wait()
 
         self._started = False
         logger.info(f"MCP stdio connection closed: {self.config.command}")

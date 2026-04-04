@@ -1,6 +1,7 @@
 """Base LLM client implementation."""
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any
@@ -59,7 +60,7 @@ class LlmClient(ABC):
         Returns:
             Estimated token count
         """
-        return self.estimate_tokens(text, role)
+        return await asyncio.to_thread(self.estimate_tokens, text, role)
 
     @abstractmethod
     def invoke(self, messages: list[LlmSystemMessage | LlmHumanMessage | LlmAIMessage]) -> LlmAIMessage:
