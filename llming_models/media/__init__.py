@@ -16,6 +16,7 @@ from llming_models.media.base import (
 from llming_models.media.provider import BaseMediaProvider, MediaModelInfo, MediaType
 from llming_models.media.registry import MEDIA_PROVIDERS, register_media_provider, get_media_provider
 from llming_models.media.manager import MediaManager
+from llming_models.media.openai_media import OpenAIMediaProvider
 
 # Import provider modules to trigger @register_media_provider decorators
 from llming_models.media import openai_media as _openai_media  # noqa: F401
@@ -38,6 +39,8 @@ __all__ = [
     "get_media_provider",
     # Manager
     "MediaManager",
+    # Providers
+    "OpenAIMediaProvider",
     # Deprecated ABCs (backwards compat)
     "TTSProvider",
     "STTProvider",

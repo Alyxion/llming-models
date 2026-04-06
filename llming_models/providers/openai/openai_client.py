@@ -357,7 +357,7 @@ class OpenAILlmClient(LlmClient):
 
         Temperature is not supported for:
         - Web search tool
-        - GPT-5 reasoning models (gpt-5-mini, gpt-5-nano, gpt-5.2, gpt-5.4)
+        - GPT-5 reasoning models (gpt-5-mini, gpt-5-nano, gpt-5.4)
         - o1/o3 reasoning models
         """
         return self._has_web_search() or self._is_reasoning_model()

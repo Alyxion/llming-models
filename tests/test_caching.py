@@ -253,15 +253,15 @@ class TestCachedCostCalculation:
         assert input_savings > 0.40  # Substantial savings
 
     def test_savings_openai_gpt5(self):
-        """GPT-5.2: $1.75 input, $0.175 cached, $14.00 output.
+        """GPT-5.4: $2.50 input, $0.25 cached, $15.00 output.
         With 80% cache hit, should save significantly."""
         full_cost = self._compute_cost(
             input_tokens=50000, output_tokens=1000, cached_input_tokens=0,
-            input_price=1.75, cached_price=0.175, output_price=14.00,
+            input_price=2.50, cached_price=0.25, output_price=15.00,
         )
         cached_cost = self._compute_cost(
             input_tokens=50000, output_tokens=1000, cached_input_tokens=40000,
-            input_price=1.75, cached_price=0.175, output_price=14.00,
+            input_price=2.50, cached_price=0.25, output_price=15.00,
         )
         savings_pct = (1.0 - cached_cost / full_cost) * 100
         assert savings_pct > 40  # Should be significant

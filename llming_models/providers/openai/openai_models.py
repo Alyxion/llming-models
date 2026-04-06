@@ -3,12 +3,11 @@ from ..llm_provider_models import LLMInfo, ModelSize, ReasoningEffort
 
 
 OPENAI_MODELS = [
-    # --- GPT-5.4 (Preview - March 2026) ---
-    # Source: https://openai.com/index/introducing-gpt-5-4/
+    # --- GPT-5.4 ---
     LLMInfo(
         provider="openai",
         name="gpt-5.4",
-        label="GPT-5.4 (Preview)",
+        label="GPT-5.4",
         model="gpt-5.4",
         description="Most capable frontier model with unified reasoning, vision, and tool use.",
         input_token_price=2.50,
@@ -20,7 +19,7 @@ OPENAI_MODELS = [
         size=ModelSize.LARGE,
         max_input_tokens=272000,
         max_output_tokens=128000,
-        popularity=40,
+        popularity=100,
         speed=7,
         quality=10,
         best_use="General purpose",
@@ -32,11 +31,11 @@ OPENAI_MODELS = [
         default_tools=["web_search"],
         native_tools={"web_search": {"type": "web_search"}},
     ),
-    # --- GPT-5.4 Large Context (Preview, 1M tokens, 2x input / 1.5x output pricing) ---
+    # --- GPT-5.4 Large Context (1M tokens, 2x input / 1.5x output pricing) ---
     LLMInfo(
         provider="openai",
         name="gpt-5.4-large-ctx",
-        label="GPT-5.4 Large Context (Preview)",
+        label="GPT-5.4 Large Context",
         model="gpt-5.4",  # same model, pricing differs above 272K
         description="GPT-5.4 with 1M token context window. Higher per-token cost.",
         input_token_price=5.00,
@@ -53,36 +52,6 @@ OPENAI_MODELS = [
         quality=10,
         best_use="Large documents",
         highlights=["1M context", "Reasoning", "Images", "Web search", "Tools"],
-        supports_image_input=True,
-        reasoning=True,
-        default_reasoning_effort=ReasoningEffort.LOW,
-        enforced_temperature=1.0,
-        default_tools=["web_search"],
-        native_tools={"web_search": {"type": "web_search"}},
-    ),
-    # --- GPT-5.2 (Flagship - December 2025) ---
-    # All GPT-5 models: 272K input, 128K output, 400K total context
-    # Source: https://openai.com/index/introducing-gpt-5-for-developers/
-    LLMInfo(
-        provider="openai",
-        name="gpt-5.2",
-        label="GPT-5.2",
-        model="gpt-5.2",
-        description="Most capable model for professional knowledge work with thinking capabilities.",
-        input_token_price=1.75,
-        cached_input_token_price=0.175,
-        output_token_price=14.00,
-        model_icon="models/chatgpt-240.svg",
-        company_icon="companies/OpenAI_logo_2025.svg",
-        hosting_icon=None,
-        size=ModelSize.LARGE,
-        max_input_tokens=272000,
-        max_output_tokens=128000,
-        popularity=100,
-        speed=7,
-        quality=9,
-        best_use="General purpose",
-        highlights=["Reasoning", "Images", "Web search", "Tools"],
         supports_image_input=True,
         reasoning=True,
         default_reasoning_effort=ReasoningEffort.LOW,

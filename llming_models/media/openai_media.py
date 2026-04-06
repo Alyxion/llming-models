@@ -1,4 +1,4 @@
-"""OpenAI media provider — TTS and STT via a single BaseMediaProvider."""
+"""OpenAI media provider — TTS and STT via OpenAI or Azure OpenAI."""
 
 from __future__ import annotations
 
@@ -27,11 +27,22 @@ logger = logging.getLogger(__name__)
 
 @register_media_provider("openai")
 class OpenAIMediaProvider(BaseMediaProvider):
-    """OpenAI TTS (gpt-4o-mini-tts) and STT (gpt-4o-transcribe / whisper-1)."""
+    """OpenAI TTS and STT — supports both direct OpenAI and Azure OpenAI.
 
-    TTS_MODEL = "gpt-4o-mini-tts"
-    STT_MODEL = "gpt-4o-transcribe"
-    WHISPER_MODEL = "whisper-1"
+    Provider selection:
+    1. Explicit credentials (api_key / base_url)
+    2. ``OPENAI_API_KEY`` env var → direct OpenAI
+    3. ``AZURE_OPENAI_API_KEY`` + ``AZURE_OPENAI_ENDPOINT`` → Azure OpenAI
+    """
+
+    # Direct OpenAI model names
+    _OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
+    _OPENAI_STT_MODEL = "gpt-4o-transcribe"
+    _OPENAI_WHISPER_MODEL = "whisper-1"
+
+    # Azure deployment defaults (overridable via env)
+    _AZURE_TTS_DEPLOYMENT = "tts-hd"
+    _AZURE_STT_DEPLOYMENT = "gpt-4o-transcribe"
 
     VOICES = [
         VoiceInfo(id="cedar", name="Cedar", gender="male", provider="openai"),
@@ -49,20 +60,12 @@ class OpenAIMediaProvider(BaseMediaProvider):
         VoiceInfo(id="alloy", name="Alloy", gender="neutral", provider="openai"),
     ]
 
-    # Locale code -> language name for TTS instructions
     _LOCALE_NAMES: dict[str, str] = {
-        "en": "English",
-        "en-us": "English",
-        "en-in": "English",
-        "de": "German",
-        "de-de": "German",
-        "de-swg": "Swabian German",
-        "fr": "French",
-        "fr-fr": "French",
-        "it": "Italian",
-        "it-it": "Italian",
-        "hi": "Hindi",
-        "hi-in": "Hindi",
+        "en": "English", "en-us": "English", "en-in": "English",
+        "de": "German", "de-de": "German", "de-swg": "Swabian German",
+        "fr": "French", "fr-fr": "French",
+        "it": "Italian", "it-it": "Italian",
+        "hi": "Hindi", "hi-in": "Hindi",
     }
 
     # Models that support the 'instructions' parameter
@@ -75,12 +78,49 @@ class OpenAIMediaProvider(BaseMediaProvider):
         credentials: ProviderCredentials | None = None,
     ):
         super().__init__(name="openai", label="OpenAI", credentials=credentials)
-        self._api_key = api_key or self._resolve_api_key()
+        self._is_azure = False
+        self._client: AsyncOpenAI | None = None
+
+        # Resolve API key + client
+        resolved_key = api_key or self._resolve_api_key()
+        azure_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+        azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+
+        if resolved_key:
+            self._api_key = resolved_key
+        elif azure_key and azure_endpoint:
+            self._api_key = azure_key
+            self._is_azure = True
+        else:
+            self._api_key = ""
+
+        # Set model/deployment names
+        if self._is_azure:
+            self.tts_model = os.environ.get("AZURE_TTS_DEPLOYMENT", self._AZURE_TTS_DEPLOYMENT)
+            self.stt_model = os.environ.get("AZURE_STT_DEPLOYMENT", self._AZURE_STT_DEPLOYMENT)
+            self.whisper_model = self.stt_model  # Azure has no separate whisper deployment
+        else:
+            self.tts_model = self._OPENAI_TTS_MODEL
+            self.stt_model = self._OPENAI_STT_MODEL
+            self.whisper_model = self._OPENAI_WHISPER_MODEL
 
     def _resolve_api_key(self) -> str:
         if self._credentials and self._credentials.api_key.get_secret_value():
             return self._credentials.api_key.get_secret_value()
         return os.environ.get("OPENAI_API_KEY", "")
+
+    def _get_client(self) -> AsyncOpenAI:
+        if self._client is None:
+            if self._is_azure:
+                from openai import AsyncAzureOpenAI
+                self._client = AsyncAzureOpenAI(
+                    api_key=self._api_key,
+                    azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT", ""),
+                    api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2025-03-01-preview"),
+                )
+            else:
+                self._client = AsyncOpenAI(api_key=self._api_key)
+        return self._client
 
     # -- BaseMediaProvider interface ------------------------------------------
 
@@ -88,15 +128,19 @@ class OpenAIMediaProvider(BaseMediaProvider):
     def is_available(self) -> bool:
         return bool(self._api_key)
 
+    @property
+    def is_azure(self) -> bool:
+        return self._is_azure
+
     def get_tts_models(self) -> list[MediaModelInfo]:
         return [
             MediaModelInfo(
                 provider="openai",
-                name="gpt-4o-mini-tts",
-                label="OpenAI TTS (gpt-4o-mini-tts)",
+                name=self.tts_model,
+                label=f"{'Azure ' if self._is_azure else ''}OpenAI TTS ({self.tts_model})",
                 media_type=MediaType.TTS,
-                price_per_1m_chars=15.0,  # $15 / 1M chars
-                supports_word_timings=True,  # via whisper round-trip
+                price_per_1m_chars=15.0,
+                supports_word_timings=not self._is_azure,
                 supports_streaming=True,
                 languages=["en", "de", "fr", "it", "hi", "es", "pt", "ja", "ko", "zh"],
                 max_chars=4096,
@@ -106,30 +150,32 @@ class OpenAIMediaProvider(BaseMediaProvider):
         ]
 
     def get_stt_models(self) -> list[MediaModelInfo]:
-        return [
+        models = [
             MediaModelInfo(
                 provider="openai",
-                name="gpt-4o-transcribe",
-                label="OpenAI STT (gpt-4o-transcribe)",
+                name=self.stt_model,
+                label=f"{'Azure ' if self._is_azure else ''}OpenAI STT ({self.stt_model})",
                 media_type=MediaType.STT,
-                price_per_minute=0.006,  # $0.006 / min
-                supports_word_timings=False,
+                price_per_minute=0.006,
+                supports_word_timings=not self._is_azure,
                 languages=["en", "de", "fr", "it", "hi", "es", "pt", "ja", "ko", "zh"],
                 speed=8,
                 quality=9,
             ),
-            MediaModelInfo(
+        ]
+        if not self._is_azure and self.whisper_model != self.stt_model:
+            models.append(MediaModelInfo(
                 provider="openai",
-                name="whisper-1",
-                label="OpenAI STT (whisper-1)",
+                name=self.whisper_model,
+                label=f"OpenAI STT ({self.whisper_model})",
                 media_type=MediaType.STT,
-                price_per_minute=0.006,  # $0.006 / min
+                price_per_minute=0.006,
                 supports_word_timings=True,
                 languages=["en", "de", "fr", "it", "hi", "es", "pt", "ja", "ko", "zh"],
                 speed=7,
                 quality=7,
-            ),
-        ]
+            ))
+        return models
 
     def list_voices(self) -> list[VoiceInfo]:
         return list(self.VOICES)
@@ -143,24 +189,19 @@ class OpenAIMediaProvider(BaseMediaProvider):
         language: str = "",
         with_timings: bool = False,
     ) -> TTSResult:
-        """Synthesize text to speech via OpenAI.
-
-        If *with_timings* is True, the generated audio is transcribed back
-        through whisper-1 to obtain word-level timestamps.
-        """
-        client = AsyncOpenAI(api_key=self._api_key)
-        tts_model = model or self.TTS_MODEL
+        client = self._get_client()
+        tts_model = model or self.tts_model
         kwargs = self._build_tts_kwargs(text, voice, language, tts_model)
 
         tts_response = await client.audio.speech.create(**kwargs)
         mp3_bytes: bytes = tts_response.content
 
         word_timings: list[WordTiming] = []
-        if with_timings:
+        if with_timings and not self._is_azure:
             audio_file = io.BytesIO(mp3_bytes)
             audio_file.name = "speech.mp3"
             stt_result = await client.audio.transcriptions.create(
-                model=self.WHISPER_MODEL,
+                model=self.whisper_model,
                 file=audio_file,
                 response_format="verbose_json",
                 timestamp_granularities=["word"],
@@ -186,18 +227,13 @@ class OpenAIMediaProvider(BaseMediaProvider):
         language: str = "",
         with_timings: bool = False,
     ) -> STTResult:
-        """Transcribe audio to text via OpenAI.
-
-        If *with_timings* is True, whisper-1 is used with verbose_json and
-        word-level timestamp granularities.
-        """
         if len(audio_bytes) < 100:
             logger.warning("[STT] Audio too small (%d bytes), skipping", len(audio_bytes))
             return STTResult(text="")
 
-        client = AsyncOpenAI(api_key=self._api_key)
+        client = self._get_client()
 
-        if with_timings:
+        if with_timings and not self._is_azure:
             return await self._transcribe_with_timings(client, audio_bytes, filename, language)
 
         return await self._transcribe_plain(client, audio_bytes, filename, language, model)
@@ -211,18 +247,18 @@ class OpenAIMediaProvider(BaseMediaProvider):
     # -- Private helpers ------------------------------------------------------
 
     def _build_tts_kwargs(self, text: str, voice: str, language: str, tts_model: str = "") -> dict:
-        """Build kwargs for the OpenAI TTS API call."""
-        used_model = tts_model or self.TTS_MODEL
+        used_model = tts_model or self.tts_model
         kwargs: dict = {
             "model": used_model,
             "voice": voice or "cedar",
             "input": text,
             "response_format": "mp3",
+            "speed": 1.0,
         }
         if used_model in self._INSTRUCTION_MODELS:
             lang_name = self._LOCALE_NAMES.get(language, "")
             if lang_name:
-                kwargs["instructions"] = f"Speak in {lang_name}."
+                kwargs["instructions"] = f"Speak in {lang_name}. Use a calm, natural pace."
         return kwargs
 
     async def _transcribe_plain(
@@ -233,8 +269,7 @@ class OpenAIMediaProvider(BaseMediaProvider):
         language: str,
         model: str = "",
     ) -> STTResult:
-        """Standard transcription without word timings."""
-        stt_model = model or self.STT_MODEL
+        stt_model = model or self.stt_model
         audio_file = io.BytesIO(audio_bytes)
         audio_file.name = filename
         kwargs: dict = {
@@ -251,28 +286,18 @@ class OpenAIMediaProvider(BaseMediaProvider):
         except Exception as exc:
             err_str = str(exc).lower()
             format_errors = (
-                "corrupted",
-                "unsupported",
-                "invalid file format",
-                "invalid_file_format",
-                "could not process",
+                "corrupted", "unsupported", "invalid file format",
+                "invalid_file_format", "could not process",
             )
             if any(s in err_str for s in format_errors):
-                logger.warning(
-                    "[STT] %s format error (%s), retrying with %s",
-                    stt_model,
-                    exc,
-                    self.WHISPER_MODEL,
-                )
+                logger.warning("[STT] %s format error (%s), retrying with %s", stt_model, exc, self.whisper_model)
                 audio_file.seek(0)
-                kwargs["model"] = self.WHISPER_MODEL
+                kwargs["model"] = self.whisper_model
                 try:
                     result = await client.audio.transcriptions.create(**kwargs)
                     return STTResult(text=result.text)
                 except Exception as exc2:
-                    logger.warning(
-                        "[STT] Fallback also failed (%s), returning empty", exc2
-                    )
+                    logger.warning("[STT] Fallback also failed (%s), returning empty", exc2)
                     return STTResult(text="")
             logger.error("[STT] Transcription failed: %s", exc)
             raise
@@ -284,11 +309,10 @@ class OpenAIMediaProvider(BaseMediaProvider):
         filename: str,
         language: str,
     ) -> STTResult:
-        """Transcription with word-level timestamps via whisper-1."""
         audio_file = io.BytesIO(audio_bytes)
         audio_file.name = filename
         kwargs: dict = {
-            "model": self.WHISPER_MODEL,
+            "model": self.whisper_model,
             "file": audio_file,
             "response_format": "verbose_json",
             "timestamp_granularities": ["word"],
@@ -308,19 +332,26 @@ class OpenAIMediaProvider(BaseMediaProvider):
         )
 
 
-# ---------------------------------------------------------------------------
-# Backwards-compatible aliases
-# ---------------------------------------------------------------------------
+    # -- Realtime API (Azure OpenAI WebRTC/WebSocket) -----------------------
 
+    def get_realtime_ws_url(self) -> str:
+        """Build the Azure OpenAI Realtime WebSocket URL."""
+        azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
+        api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+        deployment = os.environ.get("AZURE_OPENAI_REALTIME_DEPLOYMENT", "gpt-4o-realtime-preview")
+        host = azure_endpoint.replace("https://", "").replace("http://", "")
+        return f"wss://{host}/openai/realtime?api-version={api_version}&deployment={deployment}"
+
+    @staticmethod
+    def get_realtime_api_key() -> str:
+        return os.environ.get("AZURE_OPENAI_API_KEY", "")
+
+
+# Backwards-compatible aliases
 class OpenAITTSProvider(OpenAIMediaProvider):
     """Deprecated — use ``OpenAIMediaProvider`` or ``get_media_provider('openai')``."""
-
-    def __init__(self, api_key: str | None = None, **kwargs):
-        super().__init__(api_key=api_key, **kwargs)
-
+    pass
 
 class OpenAISTTProvider(OpenAIMediaProvider):
     """Deprecated — use ``OpenAIMediaProvider`` or ``get_media_provider('openai')``."""
-
-    def __init__(self, api_key: str | None = None, **kwargs):
-        super().__init__(api_key=api_key, **kwargs)
+    pass

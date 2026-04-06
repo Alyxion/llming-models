@@ -10,7 +10,7 @@ from typing import Any, TYPE_CHECKING
 
 from llming_models.providers import BaseProvider, register_provider
 from llming_models.llm_base_client import LlmClient
-from .azure_anthropic_models import AZURE_ANTHROPIC_MODELS, LLMInfo
+from .azure_anthropic_models import get_azure_anthropic_models, LLMInfo
 from llming_models.providers.anthropic.anthropic_client import AnthropicClient
 from llming_models.tools.llm_toolbox import LlmToolbox
 
@@ -42,8 +42,8 @@ class AzureAnthropicProvider(BaseProvider):
         return self._credentials is not None and self._credentials.base_url is not None
 
     def get_models(self) -> list[LLMInfo]:
-        """Get list of available Azure Anthropic models."""
-        return AZURE_ANTHROPIC_MODELS
+        """Get list of available Azure Anthropic models (resolved dynamically)."""
+        return get_azure_anthropic_models()
 
     def create_client(
         self,

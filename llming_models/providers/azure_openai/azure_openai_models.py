@@ -7,11 +7,11 @@ from ..llm_provider_models import LLMInfo, ModelSize, ReasoningEffort
 
 
 AZURE_OPENAI_MODELS = [
-    # --- GPT-5.4 (Preview) ---
+    # --- GPT-5.4 ---
     LLMInfo(
         provider="azure_openai",
         name="gpt-5.4",
-        label="GPT-5.4 (Preview)",
+        label="GPT-5.4",
         model="gpt-5.4",  # deployment name
         description="Most capable frontier model with unified reasoning, vision, and tool use.",
         input_token_price=2.50,
@@ -23,7 +23,7 @@ AZURE_OPENAI_MODELS = [
         size=ModelSize.LARGE,
         max_input_tokens=272000,
         max_output_tokens=128000,
-        popularity=40,
+        popularity=100,
         speed=7,
         quality=10,
         best_use="General purpose",
@@ -35,11 +35,11 @@ AZURE_OPENAI_MODELS = [
         default_tools=["web_search"],
         native_tools={},
     ),
-    # --- GPT-5.4 Large Context (Preview, 1M tokens) ---
+    # --- GPT-5.4 Large Context (1M tokens) ---
     LLMInfo(
         provider="azure_openai",
         name="gpt-5.4-large-ctx",
-        label="GPT-5.4 Large Context (Preview)",
+        label="GPT-5.4 Large Context",
         model="gpt-5.4",  # same deployment, pricing differs above 272K
         description="GPT-5.4 with 1M token context window. Higher per-token cost.",
         input_token_price=5.00,
@@ -56,34 +56,6 @@ AZURE_OPENAI_MODELS = [
         quality=10,
         best_use="Large documents",
         highlights=["1M context", "Reasoning", "Images", "Tools"],
-        supports_image_input=True,
-        reasoning=True,
-        default_reasoning_effort=ReasoningEffort.MEDIUM,
-        enforced_temperature=1.0,
-        default_tools=["web_search"],
-        native_tools={},
-    ),
-    # --- GPT-5.2 (Flagship - December 2025) ---
-    LLMInfo(
-        provider="azure_openai",
-        name="gpt-5.2",
-        label="GPT-5.2",
-        model="gpt-5.2",  # deployment name
-        description="Most capable model for professional knowledge work with thinking capabilities.",
-        input_token_price=1.75,
-        cached_input_token_price=0.175,
-        output_token_price=14.00,
-        model_icon="models/chatgpt-240.svg",
-        company_icon="companies/OpenAI_logo_2025.svg",
-        hosting_icon="companies/azure.svg",
-        size=ModelSize.LARGE,
-        max_input_tokens=272000,
-        max_output_tokens=128000,
-        popularity=100,
-        speed=7,
-        quality=9,
-        best_use="General purpose",
-        highlights=["Reasoning", "Images", "Tools"],
         supports_image_input=True,
         reasoning=True,
         default_reasoning_effort=ReasoningEffort.MEDIUM,
@@ -145,32 +117,5 @@ AZURE_OPENAI_MODELS = [
         enforced_temperature=1.0,
         default_tools=["web_search"],
         native_tools={},
-    ),
-    # --- o4-mini (Reasoning) ---
-    LLMInfo(
-        provider="azure_openai",
-        name="o4-mini",
-        label="o4-mini",
-        model="o4-mini",
-        description="Fast reasoning model for complex problems.",
-        input_token_price=1.10,
-        cached_input_token_price=0.275,
-        output_token_price=4.40,
-        model_icon="models/chatgpt-240.svg",
-        company_icon="companies/OpenAI_logo_2025.svg",
-        hosting_icon="companies/azure.svg",
-        size=ModelSize.MEDIUM,
-        max_input_tokens=200000,
-        max_output_tokens=100000,
-        popularity=55,
-        speed=7,
-        quality=8,
-        best_use="Reasoning",
-        highlights=["Reasoning", "Tools"],
-        supports_image_input=True,
-        reasoning=True,
-        default_reasoning_effort=ReasoningEffort.MEDIUM,
-        enforced_temperature=1.0,
-        default_tools=["web_search"],
     ),
 ]

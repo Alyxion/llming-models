@@ -226,9 +226,18 @@ class LLMManager:
         :return: The first available default model, or the raw first candidate
             if none could be verified, or None if the category is unknown.
         """
-        # User-level override takes priority (single model, no fallback list)
+        # User-level override takes priority
         if category in self.user_config.default_models:
-            return self.user_config.default_models[category]
+            user_val = self.user_config.default_models[category]
+            if isinstance(user_val, list):
+                for model in user_val:
+                    try:
+                        self.get_provider_for_model(model)
+                        return model
+                    except ValueError:
+                        continue
+                return user_val[0] if user_val else None
+            return user_val
         candidates = self.user_config.global_config.get_default_model_candidates(category)
         if not candidates:
             return None

@@ -41,12 +41,12 @@ class LLMBaseConfig:
 class LLMGlobalConfig(LLMBaseConfig):
     """Defines the global configuration for LLMs."""
     default_models: dict[str, str | list[str]] = field(default_factory=lambda: {
-        "small": ["claude_haiku", "gpt-5-nano"],
-        "medium": ["claude_sonnet", "gpt-5-mini"],
-        "large": ["claude_sonnet", "gpt-5.2"],
-        "reasoning_small": ["claude_haiku", "gpt-5-mini"],
-        "reasoning_medium": ["claude_sonnet", "gpt-5.2"],
-        "reasoning_large": ["claude_sonnet", "gpt-5.2"],
+        "small": ["gpt-5-nano", "claude_haiku"],
+        "medium": ["gpt-5-mini", "claude_haiku"],
+        "large": ["gpt-5.4", "claude_sonnet"],
+        "reasoning_small": ["gpt-5-mini", "claude_haiku"],
+        "reasoning_medium": ["gpt-5.4", "claude_sonnet"],
+        "reasoning_large": ["gpt-5.4", "claude_sonnet"],
     })
     """Default models per category. Values can be a single model name or a list of fallbacks
     (first available wins). Use bare model names for cascade resolution, or 'provider:model'

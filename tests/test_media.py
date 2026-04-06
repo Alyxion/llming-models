@@ -528,7 +528,7 @@ class TestOpenAITTSKwargs:
     def test_language_instruction(self):
         provider = OpenAIMediaProvider(api_key="test")
         kwargs = provider._build_tts_kwargs("Hallo", "cedar", "de")
-        assert kwargs["instructions"] == "Speak in German."
+        assert kwargs["instructions"] == "Speak in German. Use a calm, natural pace."
 
     def test_unknown_language(self):
         provider = OpenAIMediaProvider(api_key="test")
