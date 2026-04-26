@@ -415,41 +415,112 @@ class ToolRegistry:
 
         Raises:
             ValueError: If tool not found or source not supported
+
+        Logging
+        -------
+        Two-tier logging at the dispatcher boundary, designed to be
+        privacy-safe by default:
+
+        * INFO  — metadata only: tool name, arg KEYS (not values), and
+          elapsed ms. Safe to leave on in production. Provides the "did
+          the LLM actually call this tool?" signal without ever writing
+          user content to logs.
+        * DEBUG — full truncated arg / result / error payload. Off by
+          default. Local devs can flip the ``llming_models.tools.tool_registry``
+          logger to DEBUG when they need to see what the LLM actually
+          sent.
+
+        This split exists because tool call args & results routinely
+        contain user-authored document content, customer rows, etc. —
+        material that under GDPR / EU rules must not land in long-lived
+        log streams.
         """
+        import logging as _logging
+        import time
         tool = self.get(name)
         if not tool:
+            logger.warning("MCP tool call: '%s' (NOT FOUND)", name)
             raise ValueError(f"Tool not found: {name}")
 
-        if tool.source == ToolSource.BUILTIN:
-            if not tool.callback:
-                raise ValueError(f"Tool '{name}' has no callback configured")
-            # Call the callback (may be sync or async)
-            import asyncio
-            if asyncio.iscoroutinefunction(tool.callback):
-                return await tool.callback(**arguments)
+        arg_keys = sorted(arguments.keys()) if isinstance(arguments, dict) else []
+        logger.info("MCP tool call: %s keys=%s", name, arg_keys)
+        # Full payload only at DEBUG. ``isEnabledFor`` skips the
+        # _format_for_log call entirely when DEBUG is off, so the
+        # formatting cost stays at zero in production.
+        if logger.isEnabledFor(_logging.DEBUG):
+            logger.debug("  args=%s", _format_for_log(arguments, limit=400))
+        started = time.monotonic()
+
+        try:
+            if tool.source == ToolSource.BUILTIN:
+                if not tool.callback:
+                    raise ValueError(f"Tool '{name}' has no callback configured")
+                # Call the callback (may be sync or async)
+                import asyncio
+                if asyncio.iscoroutinefunction(tool.callback):
+                    result = await tool.callback(**arguments)
+                else:
+                    result = tool.callback(**arguments)
+
+            elif tool.source == ToolSource.PROVIDER_NATIVE:
+                # Provider-native tools are handled by the provider, not here
+                raise ValueError(f"Provider-native tool '{name}' must be executed by the provider")
+
+            elif tool.source in (ToolSource.MCP_STDIO, ToolSource.MCP_HTTP, ToolSource.MCP_INPROCESS):
+                # MCP tools require a connection
+                connection = self._mcp_connections.get(name)
+                if not connection:
+                    raise ValueError(f"MCP connection not established for tool '{name}'")
+                result = await connection.call_tool(name, arguments)
+
+            elif tool.source == ToolSource.MCP_BROWSER:
+                # Browser-hosted MCP tools — proxied via WebSocket to a Web Worker
+                connection = self._mcp_connections.get(name)
+                if not connection:
+                    raise ValueError(f"Browser MCP connection not established for tool '{name}'")
+                result = await connection.call_tool(name, arguments)
+
             else:
-                return tool.callback(**arguments)
+                raise ValueError(f"Unsupported tool source: {tool.source}")
 
-        elif tool.source == ToolSource.PROVIDER_NATIVE:
-            # Provider-native tools are handled by the provider, not here
-            raise ValueError(f"Provider-native tool '{name}' must be executed by the provider")
+        except Exception as exc:
+            elapsed_ms = (time.monotonic() - started) * 1000
+            # WARN gets only the exception TYPE — exception messages can
+            # echo back the args (e.g. "no key 'foo' in {...}") and would
+            # leak content. Full detail is at DEBUG.
+            logger.warning(
+                "MCP tool error: %s in %.0fms — %s",
+                name, elapsed_ms, type(exc).__name__,
+            )
+            if logger.isEnabledFor(_logging.DEBUG):
+                logger.debug("  exc detail: %s", exc)
+            raise
 
-        elif tool.source in (ToolSource.MCP_STDIO, ToolSource.MCP_HTTP, ToolSource.MCP_INPROCESS):
-            # MCP tools require a connection
-            connection = self._mcp_connections.get(name)
-            if not connection:
-                raise ValueError(f"MCP connection not established for tool '{name}'")
-            return await connection.call_tool(name, arguments)
+        elapsed_ms = (time.monotonic() - started) * 1000
+        logger.info("MCP tool result: %s in %.0fms", name, elapsed_ms)
+        if logger.isEnabledFor(_logging.DEBUG):
+            logger.debug("  result=%s", _format_for_log(result, limit=400))
+        return result
 
-        elif tool.source == ToolSource.MCP_BROWSER:
-            # Browser-hosted MCP tools — proxied via WebSocket to a Web Worker
-            connection = self._mcp_connections.get(name)
-            if not connection:
-                raise ValueError(f"Browser MCP connection not established for tool '{name}'")
-            return await connection.call_tool(name, arguments)
 
-        else:
-            raise ValueError(f"Unsupported tool source: {tool.source}")
+def _format_for_log(value: Any, limit: int = 400) -> str:
+    """Render ``value`` as a single line for log output, truncating at
+    ``limit`` characters. Used only by DEBUG-level lines (see
+    :meth:`ToolRegistry.execute`); INFO never sees user-content values.
+    Avoids blowing up logs with large MCP payloads (e.g. a full XLSX
+    query result) while still preserving enough of the structure to
+    read at a glance."""
+    if isinstance(value, (dict, list)):
+        try:
+            text = json.dumps(value, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            text = repr(value)
+    else:
+        text = str(value)
+    text = text.replace("\n", " ")
+    if len(text) > limit:
+        text = text[:limit] + f"...[+{len(text) - limit} chars]"
+    return text
 
 
 # Global default registry instance

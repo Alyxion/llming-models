@@ -554,6 +554,161 @@ class TestToolRegistry:
         with pytest.raises(ValueError, match="Browser MCP connection not established"):
             await reg.execute("bm", {})
 
+    # ------------------------------------------------------------------
+    # Tool-call logging at the dispatcher boundary
+    # ------------------------------------------------------------------
+    #
+    # Two-tier logging:
+    #   * INFO — metadata only (tool name + arg KEYS + elapsed). Safe in
+    #     production; never writes user content.
+    #   * DEBUG — full truncated payload. For local diagnostics only.
+    #
+    # The privacy guarantee at INFO is the load-bearing assertion — if
+    # ``test_info_log_does_not_leak_arg_values`` ever fails, somebody put
+    # a value into an INFO line and that goes straight into long-lived
+    # log streams.
+
+    @pytest.mark.asyncio
+    async def test_info_log_metadata_only(self, caplog):
+        import logging
+        reg = ToolRegistry(auto_register_defaults=False)
+        reg.register_builtin(
+            name="echo", description="Echo back",
+            callback=lambda x: f"got:{x}",
+        )
+        with caplog.at_level(logging.INFO,
+                             logger="llming_models.tools.tool_registry"):
+            await reg.execute("echo", {"x": "hello"})
+
+        info_msgs = [r.getMessage() for r in caplog.records
+                     if r.levelno == logging.INFO]
+        # Tool name + arg KEYS land at INFO; elapsed ms on the result line.
+        assert any("MCP tool call: echo" in m and "keys=['x']" in m
+                   for m in info_msgs), info_msgs
+        assert any("MCP tool result: echo in" in m and "ms" in m
+                   for m in info_msgs), info_msgs
+
+    @pytest.mark.asyncio
+    async def test_info_log_does_not_leak_arg_values(self, caplog):
+        """Privacy regression: at INFO level, arg VALUES must never
+        appear. Prod runs at INFO; values landing here would mean user
+        content streams straight into Azure log storage."""
+        import logging
+        reg = ToolRegistry(auto_register_defaults=False)
+        reg.register_builtin(
+            name="store", description="Store something",
+            callback=lambda secret_payload: "ok",
+        )
+        sentinel = "SENSITIVE-CUSTOMER-CONTENT-12345"
+        with caplog.at_level(logging.INFO,
+                             logger="llming_models.tools.tool_registry"):
+            await reg.execute("store", {"secret_payload": sentinel})
+
+        info_records = [r for r in caplog.records
+                        if r.levelno == logging.INFO]
+        joined = " | ".join(r.getMessage() for r in info_records)
+        assert sentinel not in joined, (
+            f"INFO logs leaked arg value: {joined!r}"
+        )
+        # And the key should still be there — that's the diagnostic value.
+        assert "secret_payload" in joined
+
+    @pytest.mark.asyncio
+    async def test_info_log_does_not_leak_result_values(self, caplog):
+        """Same privacy bar for return values — query_table results,
+        section content, etc. all go through this path."""
+        import logging
+        sentinel = "RESULT-CONTAINS-CUSTOMER-NAME-Hannah-Mustermann"
+        reg = ToolRegistry(auto_register_defaults=False)
+        reg.register_builtin(name="query", description="Returns rows",
+                             callback=lambda: {"rows": [{"name": sentinel}]})
+        with caplog.at_level(logging.INFO,
+                             logger="llming_models.tools.tool_registry"):
+            await reg.execute("query", {})
+        info_msgs = [r.getMessage() for r in caplog.records
+                     if r.levelno == logging.INFO]
+        joined = " | ".join(info_msgs)
+        assert sentinel not in joined, (
+            f"INFO logs leaked result value: {joined!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_debug_log_includes_full_payload(self, caplog):
+        """At DEBUG, full truncated args & results show up — that's the
+        opt-in diagnostic mode developers use locally."""
+        import logging
+        reg = ToolRegistry(auto_register_defaults=False)
+        reg.register_builtin(
+            name="echo", description="Echo back",
+            callback=lambda x: f"got:{x}",
+        )
+        with caplog.at_level(logging.DEBUG,
+                             logger="llming_models.tools.tool_registry"):
+            await reg.execute("echo", {"x": "hello"})
+        debug_msgs = [r.getMessage() for r in caplog.records
+                      if r.levelno == logging.DEBUG]
+        joined = " | ".join(debug_msgs)
+        assert '"x": "hello"' in joined or "'x': 'hello'" in joined, joined
+        assert "got:hello" in joined, joined
+
+    @pytest.mark.asyncio
+    async def test_warn_on_exception_omits_message(self, caplog):
+        """The exception TYPE goes to WARN; the message (which can echo
+        args back to the user) is gated to DEBUG."""
+        import logging
+        sentinel = "PRIVATE-PATH-customer-12345"
+        def boom(**_):
+            # Simulate an op-resolver error that quotes the offending
+            # input — this is a realistic shape from xlsx_ops/json paths.
+            raise ValueError(f"path '{sentinel}' not found")
+        reg = ToolRegistry(auto_register_defaults=False)
+        reg.register_builtin(name="boom", description="Fails", callback=boom)
+        with caplog.at_level(logging.WARNING,
+                             logger="llming_models.tools.tool_registry"):
+            with pytest.raises(ValueError):
+                await reg.execute("boom", {})
+        warn_msgs = [r.getMessage() for r in caplog.records
+                     if r.levelno == logging.WARNING]
+        joined = " | ".join(warn_msgs)
+        assert "MCP tool error: boom" in joined
+        assert "ValueError" in joined
+        # The exc message contained the sentinel — must NOT be at WARN.
+        assert sentinel not in joined, (
+            f"WARN log leaked exception detail: {joined!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_debug_log_truncates_huge_payloads(self, caplog):
+        """Tool calls returning a very large payload (e.g. a full XLSX
+        query result) should not blow up the log — the formatter
+        truncates to a fixed limit so DEBUG logs stay readable."""
+        import logging
+        big = "X" * 10_000
+        reg = ToolRegistry(auto_register_defaults=False)
+        reg.register_builtin(name="big", description="Returns huge string",
+                             callback=lambda: big)
+        with caplog.at_level(logging.DEBUG,
+                             logger="llming_models.tools.tool_registry"):
+            await reg.execute("big", {})
+        result_lines = [r.getMessage() for r in caplog.records
+                        if "result=" in r.getMessage()]
+        assert result_lines, caplog.records
+        assert "[+" in result_lines[0]
+        assert len(result_lines[0]) < 1000
+
+    @pytest.mark.asyncio
+    async def test_execute_unknown_tool_warns(self, caplog):
+        import logging
+        reg = ToolRegistry(auto_register_defaults=False)
+        with caplog.at_level(logging.WARNING,
+                             logger="llming_models.tools.tool_registry"):
+            with pytest.raises(ValueError, match="Tool not found"):
+                await reg.execute("ghost", {})
+        warnings = [r.getMessage() for r in caplog.records
+                    if r.levelno >= logging.WARNING]
+        assert any("MCP tool call: 'ghost' (NOT FOUND)" in m
+                   for m in warnings), warnings
+
     def test_get_with_provider_specific_key(self):
         reg = ToolRegistry(auto_register_defaults=True)
         # Default registry registers web_search:openai and web_search:anthropic
