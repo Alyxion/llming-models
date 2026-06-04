@@ -80,6 +80,10 @@ class AzureAnthropicProvider(BaseProvider):
         assert resolved_base is not None
         azure_base_url = resolved_base.rstrip("/") + "/anthropic/"
 
+        reasoning = next(
+            (m.reasoning for m in get_azure_anthropic_models() if m.model == model),
+            True,
+        )
         return AnthropicClient(
             api_key=self._credentials.api_key.get_secret_value(),
             model=model,
@@ -88,4 +92,5 @@ class AzureAnthropicProvider(BaseProvider):
             streaming=streaming,
             toolboxes=toolboxes or [],
             azure_base_url=azure_base_url,
+            reasoning=reasoning,
         )

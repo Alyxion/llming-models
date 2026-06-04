@@ -452,3 +452,120 @@ def test_azure_anthropic_deployments_env_empty():
     with patch.dict(os.environ, {}, clear=True):
         models = get_azure_anthropic_models()
     assert models == []
+
+
+# =========================================================================
+# Tool-argument streaming (input_json_delta) — real LLM
+# =========================================================================
+#
+# Verifies the UI-critical contract: while the model is still writing a
+# tool call, the client surfaces ``STREAMING`` chunks with ``arguments_delta``
+# fragments. This is what drives the "document side pane opens immediately
+# and fills in word-by-word" UX in the chat — regressions here make long
+# documents look like the app has frozen.
+
+_STREAMING_DOC_TOOL = {
+    "name": "create_document",
+    "description": (
+        "Create a new document. Call this tool exactly once, with the required "
+        "parameters filled in. Do not emit any other text."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "type": {"type": "string", "description": "Document type", "enum": ["text_doc"]},
+            "name": {"type": "string", "description": "Short title for the document"},
+            "data": {
+                "type": "string",
+                "description": "The document body as a JSON string of {\"sections\": [...]}",
+            },
+        },
+        "required": ["type", "name", "data"],
+    },
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not _has_anthropic, reason="ANTHROPIC_API_KEY not set")
+async def test_anthropic_stream_surfaces_input_json_delta_real():
+    """Real Sonnet call: ``create_document`` args must arrive as streaming deltas.
+
+    Sonnet (not Haiku) because Haiku often fires a tool call in one burst
+    which wouldn't exercise the multi-delta streaming path.
+    """
+    from llming_models.providers.anthropic.anthropic_client import AnthropicClient
+    from llming_models.tools.llm_tool import LlmTool
+    from llming_models.tools.llm_toolbox import LlmToolbox
+    from llming_models.tools.tool_call import ToolCallStatus
+
+    def _fake_create_document(type: str, name: str, data: str) -> str:
+        import json as _json
+        return _json.dumps({"status": "created", "document_id": "doc_1"})
+
+    tool = LlmTool(
+        name=_STREAMING_DOC_TOOL["name"],
+        description=_STREAMING_DOC_TOOL["description"],
+        func=_fake_create_document,
+        parameters=_STREAMING_DOC_TOOL["input_schema"],
+    )
+    tb = LlmToolbox(name="docs", description="Document tools", tools=[tool])
+
+    client = AnthropicClient(
+        api_key=os.environ["ANTHROPIC_API_KEY"],
+        model="claude-sonnet-4-5-20250929",
+        max_tokens=512,
+        toolboxes=[tb],
+    )
+
+    messages = [
+        LlmSystemMessage(content=(
+            "You are a document-writing assistant. When asked to draft "
+            "something, call create_document exactly once and then stop."
+        )),
+        LlmHumanMessage(content=(
+            "Create a text_doc titled \"Puppy Report\" with a short "
+            "three-sentence paragraph about golden retrievers. The data "
+            "field must be a JSON string of "
+            "{\"sections\": [{\"type\": \"paragraph\", \"content\": \"…\"}]}."
+        )),
+    ]
+
+    streaming_deltas: list[str] = []
+    pending_call_id = None
+    completed_tool_call = None
+
+    async for chunk in client.astream(messages):
+        tc = chunk.tool_call
+        if not tc:
+            continue
+        if tc.status == ToolCallStatus.STREAMING:
+            assert tc.name == "create_document"
+            assert tc.call_id, "streaming chunk must carry a call_id"
+            if pending_call_id is None:
+                pending_call_id = tc.call_id
+            else:
+                assert tc.call_id == pending_call_id
+            # The cumulative `arguments` dict is populated only on finalize.
+            assert tc.arguments is None
+            if tc.arguments_delta:
+                streaming_deltas.append(tc.arguments_delta)
+        elif tc.status == ToolCallStatus.COMPLETED:
+            completed_tool_call = tc
+
+    # We must see more than one delta — otherwise the "live" UX degrades to
+    # a single burst and the user sees nothing until the tool finalizes.
+    assert len(streaming_deltas) >= 2, (
+        f"expected ≥2 streaming deltas, got {len(streaming_deltas)}: {streaming_deltas}"
+    )
+
+    # Concatenating deltas must reconstruct valid JSON identical to the final arguments.
+    assembled = "".join(streaming_deltas)
+    import json as _json
+    parsed = _json.loads(assembled)
+    assert parsed["type"] == "text_doc"
+    assert "name" in parsed and parsed["name"]
+    assert "data" in parsed
+
+    # The tool also still completes (we didn't accidentally short-circuit the loop).
+    assert completed_tool_call is not None
+    assert completed_tool_call.arguments == parsed

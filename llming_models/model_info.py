@@ -55,7 +55,10 @@ class LLMInfo:
     company_icon: str | None = None  # Path to company/inventor icon
     hosting_icon: str | None = None  # Path to optional hosting company icon
     popularity: int = 0  # Higher value = more popular
-    reasoning: bool = False  # True if this is a reasoning model
+    reasoning: bool = True  # True if this is a reasoning model. New (post-2025) frontier
+    # models universally behave as reasoning models and reject `temperature`; we default to
+    # True so newly-declared models inherit the safe behavior. Older / non-reasoning models
+    # must opt out explicitly with ``reasoning=False``.
     reasoning_effort: ReasoningEffort | None = None  # Reasoning effort level
     default_reasoning_effort: ReasoningEffort | None = None  # Default for this model size
     enforced_temperature: float | None = None  # Enforced temperature value

@@ -582,7 +582,6 @@ class TestToolRegistry:
 
         info_msgs = [r.getMessage() for r in caplog.records
                      if r.levelno == logging.INFO]
-        # Tool name + arg KEYS land at INFO; elapsed ms on the result line.
         assert any("MCP tool call: echo" in m and "keys=['x']" in m
                    for m in info_msgs), info_msgs
         assert any("MCP tool result: echo in" in m and "ms" in m
@@ -610,7 +609,6 @@ class TestToolRegistry:
         assert sentinel not in joined, (
             f"INFO logs leaked arg value: {joined!r}"
         )
-        # And the key should still be there — that's the diagnostic value.
         assert "secret_payload" in joined
 
     @pytest.mark.asyncio
@@ -658,8 +656,6 @@ class TestToolRegistry:
         import logging
         sentinel = "PRIVATE-PATH-customer-12345"
         def boom(**_):
-            # Simulate an op-resolver error that quotes the offending
-            # input — this is a realistic shape from xlsx_ops/json paths.
             raise ValueError(f"path '{sentinel}' not found")
         reg = ToolRegistry(auto_register_defaults=False)
         reg.register_builtin(name="boom", description="Fails", callback=boom)
@@ -672,7 +668,6 @@ class TestToolRegistry:
         joined = " | ".join(warn_msgs)
         assert "MCP tool error: boom" in joined
         assert "ValueError" in joined
-        # The exc message contained the sentinel — must NOT be at WARN.
         assert sentinel not in joined, (
             f"WARN log leaked exception detail: {joined!r}"
         )

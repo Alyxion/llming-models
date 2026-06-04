@@ -42,6 +42,7 @@ class ToolboxAdapter:
         cost_callback: Callable[[str, float], None] | None = None,
         openai_client: Any | None = None,
         google_client: Any | None = None,
+        mcp_connections: dict[str, Any] | None = None,
     ) -> list[LlmToolbox]:
         """Convert tool definitions to LlmToolbox instances.
 
@@ -52,6 +53,9 @@ class ToolboxAdapter:
             cost_callback: Optional callback for cost tracking
             openai_client: Optional OpenAI client for DALL-E image generation
             google_client: Deprecated, unused
+            mcp_connections: Per-session MCP connection dict. When provided,
+                MCP tools resolve their connection from this dict instead of the
+                global registry, preventing cross-session connection bleed.
 
         Returns:
             List of LlmToolbox instances
@@ -77,7 +81,8 @@ class ToolboxAdapter:
             this_tool_config = tool_config.get(name, {})
 
             toolbox = self._create_toolbox(
-                tool, provider, this_tool_config, cost_callback, openai_client
+                tool, provider, this_tool_config, cost_callback, openai_client,
+                mcp_connections=mcp_connections,
             )
             if toolbox:
                 toolboxes.append(toolbox)
@@ -91,6 +96,7 @@ class ToolboxAdapter:
         tool_config: dict[str, Any],
         cost_callback: Callable[[str, float], None] | None = None,
         openai_client: Any | None = None,
+        mcp_connections: dict[str, Any] | None = None,
     ) -> LlmToolbox | None:
         """Create a LlmToolbox from a ToolDefinition.
 
@@ -100,6 +106,7 @@ class ToolboxAdapter:
             tool_config: Configuration for this specific tool
             cost_callback: Optional cost callback
             openai_client: Optional OpenAI client for DALL-E
+            mcp_connections: Per-session MCP connection dict (see get_toolboxes).
 
         Returns:
             LlmToolbox instance or None if not applicable
@@ -119,7 +126,7 @@ class ToolboxAdapter:
                 return None
 
         elif tool.source in (ToolSource.MCP_STDIO, ToolSource.MCP_HTTP, ToolSource.MCP_INPROCESS, ToolSource.MCP_BROWSER):
-            return self._create_mcp_toolbox(tool, tool_config, cost_callback)
+            return self._create_mcp_toolbox(tool, tool_config, cost_callback, mcp_connections=mcp_connections)
 
         else:
             logger.warning(f"Unknown tool source: {tool.source}")
@@ -288,26 +295,43 @@ class ToolboxAdapter:
         tool: ToolDefinition,
         tool_config: dict[str, Any],
         cost_callback: Callable[[str, float], None] | None = None,
+        mcp_connections: dict[str, Any] | None = None,
     ) -> LlmToolbox:
         """Create toolbox for an MCP tool.
 
         Note: MCP tools are async by nature, but LlmTool expects sync.
         We wrap them in a sync wrapper that runs the async code.
+
+        mcp_connections: when provided, the connection is resolved from this
+        per-session dict instead of the global registry. This prevents the
+        global last-writer-wins race where Session B registering create_document
+        overwrites the registry entry and Session A's LLM calls end up executing
+        against Session B's document store.
         """
         import asyncio
 
-        # Capture the registry reference for the closure
         registry = self.registry
         tool_name = tool.name
+        # Prefer the caller-supplied per-session connection dict; fall back to
+        # the global registry._mcp_connections for backward compat with callers
+        # that don't pass one (e.g. standalone batch scripts).
+        _connections = mcp_connections if mcp_connections is not None else registry._mcp_connections
 
         def sync_wrapper(**kwargs) -> Any:
             """Sync wrapper for async MCP tool execution."""
-            # Merge tool_config defaults with provided kwargs
             merged_kwargs = {**tool_config, **kwargs}
             logger.debug(f"[MCP_EXEC] Executing {tool_name}")
 
+            # Resolve the connection at call time from the session-specific dict.
+            # Using a dict reference (not a snapshot) means reconnects / late
+            # registrations are visible, while cross-session writes to the global
+            # registry are invisible to this closure.
+            connection = _connections.get(tool_name)
+            if connection is None:
+                raise ValueError(f"MCP connection not established for tool '{tool_name}'")
+
             async def _execute():
-                return await registry.execute(tool_name, merged_kwargs)
+                return await connection.call_tool(tool_name, merged_kwargs)
 
             # Get the event loop where MCP connections were created
             mcp_loop = registry.get_event_loop()
@@ -352,6 +376,7 @@ def get_toolboxes_for_config(
     openai_client: Any | None = None,
     google_client: Any | None = None,
     registry: ToolRegistry | None = None,
+    mcp_connections: dict[str, Any] | None = None,
 ) -> list[LlmToolbox]:
     """Helper function to get toolboxes for a given configuration.
 
@@ -368,6 +393,7 @@ def get_toolboxes_for_config(
         openai_client: OpenAI client for DALL-E image generation
         google_client: Deprecated, unused
         registry: ToolRegistry to use (None = default)
+        mcp_connections: Per-session MCP connection dict (see ToolboxAdapter.get_toolboxes).
 
     Returns:
         List of LlmToolbox instances
@@ -391,4 +417,5 @@ def get_toolboxes_for_config(
         tool_config=tool_config,
         cost_callback=cost_callback,
         openai_client=openai_client,
+        mcp_connections=mcp_connections,
     )

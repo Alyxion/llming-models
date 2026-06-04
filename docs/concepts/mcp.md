@@ -135,3 +135,53 @@ from llming_models.tools.mcp.browser_connection import MCPBrowserConnection
 
 !!! tip "Built-in MCP servers"
     llming-models ships with built-in MCP servers in `llming_models.tools`: `math_mcp` for mathematical operations and `gemini_image` for image generation.
+
+---
+
+## Session Isolation — Critical Security Requirement
+
+**MCP tool names are NOT globally unique across sessions.** Two users can both have `create_document`, `list_files`, or any other tool name registered simultaneously. This creates a critical isolation hazard that must be understood before building multi-session servers.
+
+### The global registry trap
+
+`ToolRegistry` maintains a global `_mcp_connections` dict keyed by tool name. Every session that registers a tool overwrites the same entry. The last session to connect wins:
+
+```
+Session A registers create_document → registry._mcp_connections["create_document"] = conn_A
+Session B registers create_document → registry._mcp_connections["create_document"] = conn_B  ← overwrites!
+
+Session A's LLM calls create_document → registry.execute("create_document", ...) → uses conn_B ← WRONG USER
+```
+
+This is a **cross-user data leak**: Session A's LLM tool call executes against Session B's MCP instance. Any state that MCP touches (document stores, file systems, databases, callbacks, WebSockets) is exposed across user boundaries.
+
+**This bug was confirmed in production** — a document created in one user's session appeared live in another user's browser because the MCP execution resolved to the wrong session's connection.
+
+### The correct pattern
+
+`ChatSession` keeps its own per-session connection dict (`self._mcp_connections`). Tool execution must resolve connections from this dict, never from the global registry:
+
+```python
+# WRONG — uses last-writer-wins global map
+connection = registry._mcp_connections.get(tool_name)
+
+# CORRECT — uses session-specific dict
+connection = session._mcp_connections.get(tool_name)
+```
+
+`_build_toolboxes()` automatically passes `mcp_connections=self._mcp_connections` to `get_toolboxes_for_config`, so the standard `ChatSession` path is safe. The fix is **already in place** — do not bypass it.
+
+### Rules for new MCP execution paths
+
+- **Never call `get_default_registry().execute(tool_name, ...)` inside a per-session or per-user code path.** This reads from the global `_mcp_connections` map and violates isolation.
+- **Never introduce a module-level dict keyed by tool name** that maps to anything session-specific (connections, stores, callbacks, WebSockets, user IDs). Tool names are not unique across sessions; session identity must be carried explicitly.
+- **Always thread `mcp_connections`** (the session's own dict) to any new execution path that invokes MCP tools.
+- When adding a new top-level execution path (e.g. a realtime voice pipeline, a batch runner), verify that it resolves connections from the calling session's dict, not the global registry.
+
+### What the global registry IS for
+
+`registry._mcp_connections` is still written to so that:
+- Standalone scripts with a single session continue to work without threading a connections dict.
+- The realtime Azure voice path (which does not have a `ChatSession` object) can function.
+
+It is a fallback, not the primary path. The presence of an entry in `registry._mcp_connections` does NOT mean that entry is the right connection for the current session.

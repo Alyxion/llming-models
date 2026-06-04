@@ -420,9 +420,10 @@ class TestBuildKwargs:
     def test_basic_kwargs(self, mock_anthropic, mock_async):
         from llming_models.providers.anthropic.anthropic_client import AnthropicClient
 
+        # reasoning=False so temperature is still passed through the API kwargs.
         client = AnthropicClient(
             api_key="sk-ant-test", model="claude-sonnet-4-5-20250929",
-            temperature=0.5, max_tokens=2048,
+            temperature=0.5, max_tokens=2048, reasoning=False,
         )
         kwargs = client._build_kwargs([
             LlmSystemMessage(content="Be helpful"),
@@ -479,6 +480,112 @@ class TestBuildKwargs:
         client = AnthropicClient(api_key="sk-ant-test", model="claude-sonnet-4-5-20250929")
         kwargs = client._build_kwargs([LlmHumanMessage(content="Hi")])
         assert "tools" not in kwargs
+
+    @patch("llming_models.providers.anthropic.anthropic_client.AsyncAnthropic")
+    @patch("llming_models.providers.anthropic.anthropic_client.Anthropic")
+    def test_reasoning_default_is_true(self, mock_anthropic, mock_async):
+        """New-default guard: unspecified ``reasoning`` is the safe ``True``.
+
+        Claude 4.x reasoning models reject the ``temperature`` parameter, so the
+        safe default is to omit it. This test pins the default so a refactor
+        can't accidentally flip it back to False.
+        """
+        from llming_models.providers.anthropic.anthropic_client import AnthropicClient
+
+        client = AnthropicClient(api_key="sk-ant-test", model="claude-opus-4-7")
+        assert client.reasoning is True
+
+    @patch("llming_models.providers.anthropic.anthropic_client.AsyncAnthropic")
+    @patch("llming_models.providers.anthropic.anthropic_client.Anthropic")
+    def test_reasoning_model_omits_temperature(self, mock_anthropic, mock_async):
+        """With ``reasoning=True``, ``temperature`` must NOT reach the API.
+
+        Regression guard for the production 400 error:
+        ``'`temperature` is deprecated for this model.'`` against Opus 4.7.
+        """
+        from llming_models.providers.anthropic.anthropic_client import AnthropicClient
+
+        client = AnthropicClient(
+            api_key="sk-ant-test", model="claude-opus-4-7",
+            temperature=0.5, reasoning=True,
+        )
+        kwargs = client._build_kwargs([LlmHumanMessage(content="Hi")])
+        assert "temperature" not in kwargs
+        assert kwargs["model"] == "claude-opus-4-7"
+        assert kwargs["max_tokens"] == 4096
+
+    @patch("llming_models.providers.anthropic.anthropic_client.AsyncAnthropic")
+    @patch("llming_models.providers.anthropic.anthropic_client.Anthropic")
+    def test_non_reasoning_model_keeps_temperature(self, mock_anthropic, mock_async):
+        """Legacy models that still accept ``temperature`` must keep receiving it."""
+        from llming_models.providers.anthropic.anthropic_client import AnthropicClient
+
+        client = AnthropicClient(
+            api_key="sk-ant-test", model="claude-3-5-sonnet-20241022",
+            temperature=0.3, reasoning=False,
+        )
+        kwargs = client._build_kwargs([LlmHumanMessage(content="Hi")])
+        assert kwargs["temperature"] == 0.3
+
+
+class TestLLMInfoReasoningDefault:
+    """The dataclass default must stay ``True`` so that forgetting to set it
+    on a new frontier model is the safe choice."""
+
+    def test_llm_info_reasoning_defaults_to_true(self):
+        from llming_models.providers.llm_provider_models import LLMInfo
+
+        info = LLMInfo(
+            provider="test", name="x", label="X", model="x",
+            description="", input_token_price=0.0,
+        )
+        assert info.reasoning is True
+
+    def test_legacy_providers_opt_out(self):
+        """Mistral and DeepSeek models must keep ``reasoning=False`` so they
+        continue to receive ``temperature``."""
+        from llming_models.providers.mistral.mistral_models import MISTRAL_MODELS
+        from llming_models.providers.together.deepseek.deepseek_models import (
+            TOGETHER_DEEPSEEK_MODELS,
+        )
+
+        assert MISTRAL_MODELS, "MISTRAL_MODELS should not be empty"
+        assert TOGETHER_DEEPSEEK_MODELS, "TOGETHER_DEEPSEEK_MODELS should not be empty"
+        for m in MISTRAL_MODELS:
+            assert m.reasoning is False, f"{m.name} should be non-reasoning"
+        for m in TOGETHER_DEEPSEEK_MODELS:
+            assert m.reasoning is False, f"{m.name} should be non-reasoning"
+
+
+class TestAnthropicProviderReasoningPropagation:
+    """The provider must look up the model's ``reasoning`` flag from model
+    metadata and pass it to the client — otherwise the client falls back to
+    its default and we lose the per-model opt-out story."""
+
+    @patch("llming_models.providers.anthropic.anthropic_client.AsyncAnthropic")
+    @patch("llming_models.providers.anthropic.anthropic_client.Anthropic")
+    def test_provider_passes_reasoning_from_model_metadata(
+        self, mock_anthropic, mock_async
+    ):
+        from llming_models.providers.anthropic.anthropic_provider import (
+            AnthropicProvider,
+        )
+        from llming_models.providers.anthropic.anthropic_models import (
+            ANTHROPIC_MODELS,
+        )
+        from llming_models.credentials import ProviderCredentials
+
+        # Pick a real, declared Claude 4.x model and confirm the provider
+        # reads its ``reasoning=True`` out of ANTHROPIC_MODELS and hands that
+        # through to the constructed client.
+        opus = next(m for m in ANTHROPIC_MODELS if m.name == "claude_opus")
+        assert opus.reasoning is True
+
+        provider = AnthropicProvider(
+            credentials=ProviderCredentials(api_key="sk-ant-test")
+        )
+        client = provider.create_client(model=opus.model)
+        assert client.reasoning is True
 
 
 # ---------------------------------------------------------------------------
@@ -990,3 +1097,94 @@ class TestAStream:
         completed = [c for c in chunks if c.tool_call and c.tool_call.status == ToolCallStatus.COMPLETED]
         assert len(completed) == 1
         assert completed[0].tool_call.arguments == {}
+
+
+class TestAStreamArgumentStreaming:
+    """``input_json_delta`` events must surface to callers as live ``STREAMING``
+    chunks so the frontend can show progressive feedback while the model is
+    still writing the tool call (used for the document side-pane UX)."""
+
+    @pytest.mark.asyncio
+    @patch("llming_models.providers.anthropic.anthropic_client.AsyncAnthropic")
+    @patch("llming_models.providers.anthropic.anthropic_client.Anthropic")
+    async def test_input_json_delta_emits_streaming_chunks(self, mock_anthropic_cls, mock_async_cls):
+        from llming_models.providers.anthropic.anthropic_client import AnthropicClient
+
+        mock_aclient = MagicMock()
+        mock_async_cls.return_value = mock_aclient
+
+        # Model emits the arguments as three JSON fragments before the tool fires.
+        fragments = ['{"type":"text_doc",', ' "name":"Report",', ' "data":"hello"}']
+        events = [
+            SimpleNamespace(
+                type="content_block_start",
+                content_block=SimpleNamespace(type="tool_use", id="toolu_doc", name="create_document"),
+            ),
+            *[
+                SimpleNamespace(
+                    type="content_block_delta",
+                    delta=SimpleNamespace(type="input_json_delta", partial_json=frag),
+                )
+                for frag in fragments
+            ],
+            SimpleNamespace(type="content_block_stop"),
+        ]
+        final_msg_1 = _make_response(
+            stop_reason="tool_use",
+            content=[_make_tool_use_block(
+                "create_document",
+                {"type": "text_doc", "name": "Report", "data": "hello"},
+                "toolu_doc",
+            )],
+            usage=_make_usage(),
+        )
+        final_msg_2 = _make_response("done.", stop_reason="end_turn", usage=_make_usage())
+
+        mock_aclient.messages.stream = MagicMock(side_effect=[
+            _AsyncStreamCtx(events, final_msg_1),
+            _AsyncStreamCtx([], final_msg_2),
+        ])
+
+        tool = LlmTool(
+            name="create_document",
+            description="Create a document",
+            func=lambda type, name, data: '{"status":"created","document_id":"d1"}',
+            parameters={"type": "object", "properties": {}},
+        )
+        tb = LlmToolbox(name="docs", description="d", tools=[tool])
+        client = AnthropicClient(
+            api_key="sk-ant-test", model="claude-sonnet-4-5-20250929", toolboxes=[tb],
+        )
+
+        chunks = []
+        async for chunk in client.astream([LlmHumanMessage(content="draft a report")]):
+            chunks.append(chunk)
+
+        streaming_chunks = [
+            c for c in chunks
+            if c.tool_call and c.tool_call.status == ToolCallStatus.STREAMING
+        ]
+        # One streaming chunk per input_json_delta event.
+        assert len(streaming_chunks) == len(fragments)
+        # Concatenating their deltas reproduces the full argument JSON.
+        assembled = "".join(c.tool_call.arguments_delta or "" for c in streaming_chunks)
+        assert json.loads(assembled) == {
+            "type": "text_doc", "name": "Report", "data": "hello",
+        }
+        # Each streaming chunk carries the tool identity so the UI can group
+        # deltas by call_id across overlapping tool calls.
+        for c in streaming_chunks:
+            assert c.tool_call.name == "create_document"
+            assert c.tool_call.call_id == "toolu_doc"
+            # ``arguments`` stays None during streaming — only set on finalize.
+            assert c.tool_call.arguments is None
+
+        # The finalized tool call still fires — STREAMING chunks don't replace it.
+        completed = [
+            c for c in chunks
+            if c.tool_call and c.tool_call.status == ToolCallStatus.COMPLETED
+        ]
+        assert len(completed) == 1
+        assert completed[0].tool_call.arguments == {
+            "type": "text_doc", "name": "Report", "data": "hello",
+        }

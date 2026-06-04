@@ -253,10 +253,21 @@ class OpenAILlmClient(LlmClient):
         """
         _recurse = OpenAILlmClient._enforce_strict_schema
         schema = dict(schema)
+
+        # Flatten oneOf/anyOf/allOf — GPT-5.4 strict mode rejects these keywords entirely.
+        # Pick the first concrete type variant; fall back to string.
+        for combo_key in ("oneOf", "anyOf", "allOf"):
+            if combo_key in schema:
+                variants = [_recurse(dict(s)) for s in schema[combo_key]]
+                del schema[combo_key]
+                if not schema.get("type"):
+                    first_typed = next((v for v in variants if v.get("type")), None)
+                    schema["type"] = first_typed["type"] if first_typed else "string"
+
         typ = schema.get("type")
 
         # Ensure every node has a type (required by strict mode)
-        if not typ and "anyOf" not in schema and "oneOf" not in schema and "allOf" not in schema:
+        if not typ:
             schema["type"] = "string"
             typ = "string"
 
@@ -273,11 +284,6 @@ class OpenAILlmClient(LlmClient):
             if "items" not in schema:
                 schema["items"] = {"type": "string"}
             schema["items"] = _recurse(dict(schema["items"]))
-
-        # anyOf / oneOf / allOf
-        for combo_key in ("anyOf", "oneOf", "allOf"):
-            if combo_key in schema:
-                schema[combo_key] = [_recurse(dict(s)) for s in schema[combo_key]]
 
         # Move default to description
         if "default" in schema:

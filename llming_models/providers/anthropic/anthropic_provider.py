@@ -70,11 +70,16 @@ class AnthropicProvider(BaseProvider):
             raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
 
         assert self._credentials is not None
+        reasoning = next(
+            (m.reasoning for m in ANTHROPIC_MODELS if m.model == model),
+            True,
+        )
         return AnthropicClient(
             api_key=self._credentials.api_key.get_secret_value(),
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
             streaming=streaming,
-            toolboxes=toolboxes or []
+            toolboxes=toolboxes or [],
+            reasoning=reasoning,
         )

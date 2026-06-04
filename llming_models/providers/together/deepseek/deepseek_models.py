@@ -25,6 +25,7 @@ TOGETHER_DEEPSEEK_MODELS = [
         quality=9,
         best_use="Deep reasoning",
         highlights=["Deep reasoning", "Math", "Code"],
+        reasoning=False,
     ),
     LLMInfo(
         provider="together",
@@ -47,6 +48,7 @@ TOGETHER_DEEPSEEK_MODELS = [
         quality=7,
         best_use="Code & math",
         highlights=["Code", "Math", "Low cost"],
+        reasoning=False,
     ),
 ]
 

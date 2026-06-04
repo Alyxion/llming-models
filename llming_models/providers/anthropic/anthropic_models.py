@@ -6,8 +6,8 @@ ANTHROPIC_MODELS = [
     LLMInfo(
         provider="anthropic",
         name="claude_opus",
-        label="Claude Opus 4.6",
-        model="claude-opus-4-6",
+        label="Claude Opus 4.7",
+        model="claude-opus-4-7",
         description="Most capable Claude model for complex tasks.",
         input_token_price=5.00,
         cached_input_token_price=0.50,

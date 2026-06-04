@@ -158,6 +158,7 @@ class ChatSession:
                 default_tools=server_config.default_enabled_tools,
                 collapse_tools=server_config.collapse_tools,
                 flyout=server_config.flyout,
+                hidden=server_config.hidden,
             )
             meta['server_id'] = server_id
             meta['group_id'] = meta['label'] or server_id or f"mcp_{idx}"
@@ -223,6 +224,12 @@ class ChatSession:
                 "requires_providers": meta['requires'],
                 "collapse_tools": meta.get('collapse_tools', False),
                 "flyout": meta.get('flyout', False),
+                # Nudge-bound / droplet MCPs mark themselves ``hidden`` so
+                # their tools are never shown in the toggle UI.  The
+                # ``chat_controller.build_tools_for_ui`` filter honours
+                # this key (group.get("hidden")) and drops every tool in
+                # the group from the emitted list.
+                "hidden": meta.get('hidden', False),
                 "tool_names": group_tool_names,
             }
 
@@ -396,7 +403,9 @@ class ChatSession:
 
         logger.info(f"[TOOLBOXES] Building toolboxes: config.tools={self.config.tools}, model_defaults={model_default_tools}")
 
-        # Use the adapter to get toolboxes
+        # Use the adapter to get toolboxes.
+        # Pass self._mcp_connections so MCP tools resolve their connection from
+        # this session's dict, not the global registry's last-writer-wins map.
         result = get_toolboxes_for_config(
             tools=self.config.tools,
             provider=self.config.provider,
@@ -404,6 +413,7 @@ class ChatSession:
             tool_config=self.config.tool_config,
             cost_callback=tool_cost_callback,
             openai_client=openai_client,
+            mcp_connections=self._mcp_connections,
         )
 
         # Log what toolboxes were created

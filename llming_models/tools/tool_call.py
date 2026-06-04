@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 class ToolCallStatus(str, Enum):
     """Status of a tool call."""
+    STREAMING = "streaming"    # Model is streaming the tool arguments (arguments_delta set)
     PENDING = "pending"        # Tool call initiated, waiting to execute
     EXECUTING = "executing"    # Tool is currently executing
     COMPLETED = "completed"    # Tool completed successfully
@@ -25,6 +26,14 @@ class ToolCallInfo(BaseModel):
     call_id: str = Field(description="Unique identifier for this call")
     status: ToolCallStatus = Field(description="Current status of the tool call")
     arguments: dict[str, Any] | None = Field(default=None, description="Arguments passed to the tool")
+    arguments_delta: str | None = Field(
+        default=None,
+        description=(
+            "Incremental JSON fragment of the tool's arguments emitted during "
+            "``STREAMING`` events. Not the cumulative value — only the bytes that "
+            "arrived in this delta. Callers accumulate as needed."
+        ),
+    )
     result: Any | None = Field(default=None, description="Result from tool execution")
     error: str | None = Field(default=None, description="Error message if failed")
     sources: list[dict[str, Any]] | None = Field(default=None, description="Source attribution data (e.g. flux sources)")

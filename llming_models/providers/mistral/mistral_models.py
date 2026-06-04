@@ -23,6 +23,7 @@ MISTRAL_MODELS = [
         quality=8,
         best_use="Multilingual",
         highlights=["Multilingual", "Reasoning", "EU hosted"],
+        reasoning=False,
     ),
     LLMInfo(
         provider="mistral",
@@ -43,6 +44,7 @@ MISTRAL_MODELS = [
         quality=6,
         best_use="Multilingual",
         highlights=["Multilingual", "Balanced", "EU hosted"],
+        reasoning=False,
     ),
     LLMInfo(
         provider="mistral",
@@ -63,6 +65,7 @@ MISTRAL_MODELS = [
         quality=4,
         best_use="Quick tasks",
         highlights=["Fast", "Low cost", "EU hosted"],
+        reasoning=False,
     ),
 ]
 

@@ -32,6 +32,7 @@ class MCPServerConfig(BaseModel):
     requires_providers: list[str] | None = Field(default=None, description="If set, MCP tools only work with these providers (respects PROVIDER_COMPAT). None = all providers.")
     collapse_tools: bool = Field(default=False, description="If True, all tools are shown as a single toggle in the UI instead of individual entries.")
     flyout: bool = Field(default=False, description="If True, tools get their own top-level flyout in the plus menu")
+    hidden: bool = Field(default=False, description="If True, the MCP server and all its tools are omitted from the UI tool list. Tools still execute when enabled (e.g. because a nudge auto-activates them); useful for nudge-bound MCPs that should be invisible to the user.")
     avatar: str | None = Field(default=None, description="Custom avatar icon path (relative to staticBase, e.g. 'models/lisa-avatar.gif'). When set, replaces the model icon in chat message headers when this MCP's tools are used.")
     auto_activate_keywords: list[str] | None = Field(default=None, description="Keywords that trigger auto-activation of this MCP. When a user message matches any keyword (case-insensitive), the MCP tools are enabled for the session.")
 

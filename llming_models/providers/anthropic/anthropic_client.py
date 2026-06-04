@@ -180,6 +180,7 @@ class AnthropicClient(LlmClient):
         streaming: bool = False,
         toolboxes: Optional[List[LlmToolbox]] = None,
         azure_base_url: Optional[str] = None,
+        reasoning: bool = True,
     ):
         """
         Initialize Anthropic client.
@@ -187,14 +188,19 @@ class AnthropicClient(LlmClient):
         Args:
             api_key: Anthropic API key (or from ANTHROPIC_API_KEY env var)
             model: Model name (e.g., "claude-sonnet-4-5-20250929")
-            temperature: Sampling temperature
+            temperature: Sampling temperature (ignored when ``reasoning`` is True —
+                Claude 4.x reasoning models reject the parameter)
             max_tokens: Maximum output tokens
             streaming: Whether to stream by default
             toolboxes: Optional list of tool collections
             azure_base_url: If set, use AnthropicFoundry with this base URL
                 for Azure AI Services hosted models.
+            reasoning: Whether the target model is a reasoning model. Reasoning
+                models (all modern Claude 4.x) reject ``temperature`` — we skip
+                sending it when this is True.
         """
         super().__init__(model, temperature, max_tokens, streaming)
+        self.reasoning = reasoning
 
         import os
         api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
@@ -255,12 +261,13 @@ class AnthropicClient(LlmClient):
         """Build kwargs for API call with prompt caching enabled."""
         system_prompt, converted = _convert_messages(messages)
 
-        kwargs = {
+        kwargs: Dict[str, Any] = {
             "model": self.model,
             "messages": converted,
-            "temperature": self.temperature,
             "max_tokens": self.max_tokens or 4096,
         }
+        if not self.reasoning:
+            kwargs["temperature"] = self.temperature
 
         if system_prompt:
             # Structured format with cache_control for prompt caching.
@@ -496,8 +503,25 @@ class AnthropicClient(LlmClient):
                                         response_metadata={}
                                     )
                                 elif delta.type == 'input_json_delta' and current_tool_use:
-                                    # Tool input being streamed
+                                    # Tool input being streamed — accumulate locally for the
+                                    # final parse, AND forward the delta to callers so UIs
+                                    # can show "live" progress (open a side pane, render
+                                    # title / content word-by-word) instead of waiting for
+                                    # the whole tool call to complete.
                                     current_tool_input += delta.partial_json
+                                    yield LlmMessageChunk(
+                                        content="",
+                                        role=Role.ASSISTANT,
+                                        index=next(chunk_index),
+                                        is_final=False,
+                                        response_metadata={},
+                                        tool_call=ToolCallInfo(
+                                            name=current_tool_use['name'],
+                                            call_id=current_tool_use['id'],
+                                            status=ToolCallStatus.STREAMING,
+                                            arguments_delta=delta.partial_json,
+                                        ),
+                                    )
 
                         elif event.type == 'content_block_stop':
                             if current_tool_use:
