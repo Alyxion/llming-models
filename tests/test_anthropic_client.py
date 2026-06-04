@@ -492,7 +492,7 @@ class TestBuildKwargs:
         """
         from llming_models.providers.anthropic.anthropic_client import AnthropicClient
 
-        client = AnthropicClient(api_key="sk-ant-test", model="claude-opus-4-7")
+        client = AnthropicClient(api_key="sk-ant-test", model="claude-opus-4-8")
         assert client.reasoning is True
 
     @patch("llming_models.providers.anthropic.anthropic_client.AsyncAnthropic")
@@ -501,17 +501,17 @@ class TestBuildKwargs:
         """With ``reasoning=True``, ``temperature`` must NOT reach the API.
 
         Regression guard for the production 400 error:
-        ``'`temperature` is deprecated for this model.'`` against Opus 4.7.
+        ``'`temperature` is deprecated for this model.'`` against Opus 4.8.
         """
         from llming_models.providers.anthropic.anthropic_client import AnthropicClient
 
         client = AnthropicClient(
-            api_key="sk-ant-test", model="claude-opus-4-7",
+            api_key="sk-ant-test", model="claude-opus-4-8",
             temperature=0.5, reasoning=True,
         )
         kwargs = client._build_kwargs([LlmHumanMessage(content="Hi")])
         assert "temperature" not in kwargs
-        assert kwargs["model"] == "claude-opus-4-7"
+        assert kwargs["model"] == "claude-opus-4-8"
         assert kwargs["max_tokens"] == 4096
 
     @patch("llming_models.providers.anthropic.anthropic_client.AsyncAnthropic")

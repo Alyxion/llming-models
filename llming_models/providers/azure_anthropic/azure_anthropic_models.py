@@ -18,9 +18,9 @@ def get_azure_anthropic_models() -> list[LLMInfo]:
     Format: comma-separated name=deployment pairs.
 
     Example:
-        AZURE_ANTHROPIC_DEPLOYMENTS=claude_opus=claude-opus-4-7,claude_sonnet=claude-sonnet-4-6
+        AZURE_ANTHROPIC_DEPLOYMENTS=claude_opus=claude-opus-4-8,claude_sonnet=claude-sonnet-4-6
 
-    This routes Opus requests to the claude-opus-4-7 deployment and
+    This routes Opus requests to the claude-opus-4-8 deployment and
     Sonnet requests to claude-sonnet-4-6. Useful when only one
     deployment has quota per model.
     """
@@ -31,7 +31,7 @@ def get_azure_anthropic_models() -> list[LLMInfo]:
     # Base definitions keyed by canonical name
     model_defs: dict[str, dict[str, Any]] = {
         "claude_opus": dict(
-            label="Claude Opus 4.7",
+            label="Claude Opus 4.8",
             description="Most capable Claude model for complex tasks.",
             input_token_price=5.00,
             cached_input_token_price=0.50,
